@@ -3,13 +3,13 @@
   "version": "1.0.0",
   "type": "module",
   "main": "src/server.js",
- "scripts": {
-       "start": "node src/server.js",
-       "dev": "nodemon src/server.js",
-       "db:generate": "drizzle-kit generate",
-       "db:migrate": "drizzle-kit migrate",
-       "db:studio": "drizzle-kit studio"
-     },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
