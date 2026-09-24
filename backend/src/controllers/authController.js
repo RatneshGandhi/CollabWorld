@@ -94,3 +94,18 @@ export const loginUser = asyncHandler(async (req, res) => {
     },
   });
 });
+
+/**
+ * @desc    Get currently authenticated user profile
+ * @route   GET /api/v1/auth/me
+ * @access  Private (Protected by authMiddleware)
+ */
+export const getMe = asyncHandler(async (req, res) => {
+  // req.user was populated by protect middleware
+  res.status(200).json({
+    success: true,
+    data: {
+      user: req.user,
+    },
+  });
+});
