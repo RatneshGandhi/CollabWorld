@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import authRoutes from './authRoutes.js';
+import docRoutes from './docRoutes.js';
 
 const router = Router();
 
@@ -11,7 +12,8 @@ router.get('/ping', (req, res) => {
   });
 });
 
-// Mount Authentication routes
+// API Routes
 router.use('/auth', authRoutes);
+router.use('/documents', docRoutes);
 
 export default router;

@@ -8,11 +8,16 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 export const protect = asyncHandler(async (req, res, next) => {
   let token;
 
-  // 1. Check if Authorization header exists and follows "Bearer <token>" format
+  // 1. Check if Authorization header exists
   const authHeader = req.headers.authorization;
 
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.split(' ')[1];
+  if (authHeader) {
+    // Robust cleanup: removes any accidental 'Authorization:', 'Bearer' prefixes and extra spaces
+    token = authHeader
+      .replace(/^Authorization:\s*/i, '')
+      .replace(/^Bearer\s+/i, '')
+      .replace(/^Bearer\s+/i, '')
+      .trim();
   }
 
   // 2. Reject if token is missing
