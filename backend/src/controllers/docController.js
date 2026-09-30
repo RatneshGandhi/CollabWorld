@@ -1,8 +1,27 @@
-import { eq, and, desc } from 'drizzle-orm';
+
+import { eq, and, desc, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { documents } from '../db/schema.js';
+import { documents, documentCollaborators } from '../db/schema.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
+
+// Helper: resolve user role on a document ('owner' | 'editor' | 'viewer' | null)
+const getUserRole = async (documentId, userId, ownerId) => {
+  if (ownerId === userId) return 'owner';
+
+  const [collab] = await db
+    .select({ role: documentCollaborators.role })
+    .from(documentCollaborators)
+    .where(
+      and(
+        eq(documentCollaborators.documentId, documentId),
+        eq(documentCollaborators.userId, userId)
+      )
+    )
+    .limit(1);
+
+  return collab ? collab.role : null;
+};
 
 /**
  * @desc    Create a new blank document
@@ -27,19 +46,21 @@ export const createDocument = asyncHandler(async (req, res) => {
     message: 'Document created successfully',
     data: {
       document: newDoc,
+      userRole: 'owner',
     },
   });
 });
 
 /**
- * @desc    Get all active documents owned by the logged-in user
+ * @desc    Get all active documents owned by or shared with the user
  * @route   GET /api/v1/documents
  * @access  Private (Protected)
  */
 export const getUserDocuments = asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
-  const userDocs = await db
+  // 1. Fetch owned documents
+  const ownedDocs = await db
     .select({
       id: documents.id,
       title: documents.title,
@@ -52,17 +73,54 @@ export const getUserDocuments = asyncHandler(async (req, res) => {
     .where(and(eq(documents.ownerId, userId), eq(documents.isArchived, false)))
     .orderBy(desc(documents.updatedAt));
 
+  // 2. Fetch shared collaborations
+  const collaborations = await db
+    .select({
+      documentId: documentCollaborators.documentId,
+      role: documentCollaborators.role,
+    })
+    .from(documentCollaborators)
+    .where(eq(documentCollaborators.userId, userId));
+
+  let sharedDocs = [];
+  if (collaborations.length > 0) {
+    const docIds = collaborations.map((c) => c.documentId);
+    const rawShared = await db
+      .select({
+        id: documents.id,
+        title: documents.title,
+        ownerId: documents.ownerId,
+        isArchived: documents.isArchived,
+        createdAt: documents.createdAt,
+        updatedAt: documents.updatedAt,
+      })
+      .from(documents)
+      .where(and(inArray(documents.id, docIds), eq(documents.isArchived, false)))
+      .orderBy(desc(documents.updatedAt));
+
+    // Map role onto shared documents
+    const roleMap = new Map(collaborations.map((c) => [c.documentId, c.role]));
+    sharedDocs = rawShared.map((doc) => ({
+      ...doc,
+      userRole: roleMap.get(doc.id) || 'viewer',
+    }));
+  }
+
+  // Tag owned documents with role 'owner'
+  const taggedOwned = ownedDocs.map((doc) => ({ ...doc, userRole: 'owner' }));
+
   res.status(200).json({
     success: true,
-    count: userDocs.length,
+    count: taggedOwned.length + sharedDocs.length,
     data: {
-      documents: userDocs,
+      owned: taggedOwned,
+      shared: sharedDocs,
     },
   });
 });
 
 /**
- * @desc    Get single document by ID (includes rich text delta data)
+ * @desc    Get single document by ID (includes rich text delta data + role)
  * @route   GET /api/v1/documents/:id
  * @access  Private (Protected)
  */
@@ -70,20 +128,20 @@ export const getDocumentById = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const userId = req.user.id;
 
-  // 1. Query document by ID
   const [doc] = await db
     .select()
     .from(documents)
     .where(and(eq(documents.id, id), eq(documents.isArchived, false)))
     .limit(1);
 
-  // 2. Check if document exists
   if (!doc) {
     throw new AppError('Document not found', 404);
   }
 
-  // 3. Authorization check: only owner can access (collaborators will be added in Phase 3)
-  if (doc.ownerId !== userId) {
+  // Check role
+  const userRole = await getUserRole(doc.id, userId, doc.ownerId);
+
+  if (!userRole) {
     throw new AppError('You do not have permission to view this document', 403);
   }
 
@@ -91,6 +149,7 @@ export const getDocumentById = asyncHandler(async (req, res) => {
     success: true,
     data: {
       document: doc,
+      userRole,
     },
   });
 });
@@ -98,14 +157,13 @@ export const getDocumentById = asyncHandler(async (req, res) => {
 /**
  * @desc    Update document title
  * @route   PATCH /api/v1/documents/:id
- * @access  Private (Protected)
+ * @access  Private (Owner or Editor only)
  */
 export const updateDocumentTitle = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { title } = req.body;
   const userId = req.user.id;
 
-  // 1. Verify existence & ownership
   const [existingDoc] = await db
     .select()
     .from(documents)
@@ -116,11 +174,12 @@ export const updateDocumentTitle = asyncHandler(async (req, res) => {
     throw new AppError('Document not found', 404);
   }
 
-  if (existingDoc.ownerId !== userId) {
+  const userRole = await getUserRole(existingDoc.id, userId, existingDoc.ownerId);
+
+  if (!userRole || userRole === 'viewer') {
     throw new AppError('You do not have permission to rename this document', 403);
   }
 
-  // 2. Update title & timestamp
   const [updatedDoc] = await db
     .update(documents)
     .set({
@@ -142,14 +201,13 @@ export const updateDocumentTitle = asyncHandler(async (req, res) => {
 /**
  * @desc    Save/Persist editor delta content
  * @route   PUT /api/v1/documents/:id/save
- * @access  Private (Protected)
+ * @access  Private (Owner or Editor only)
  */
 export const saveDocumentData = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { data } = req.body;
   const userId = req.user.id;
 
-  // 1. Verify existence & ownership
   const [existingDoc] = await db
     .select()
     .from(documents)
@@ -160,11 +218,12 @@ export const saveDocumentData = asyncHandler(async (req, res) => {
     throw new AppError('Document not found', 404);
   }
 
-  if (existingDoc.ownerId !== userId) {
-    throw new AppError('You do not have permission to edit this document', 403);
+  const userRole = await getUserRole(existingDoc.id, userId, existingDoc.ownerId);
+
+  if (!userRole || userRole === 'viewer') {
+    throw new AppError('Viewers do not have permission to edit this document', 403);
   }
 
-  // 2. Persist delta & update timestamp
   const [savedDoc] = await db
     .update(documents)
     .set({
@@ -192,11 +251,10 @@ export const deleteDocument = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const userId = req.user.id;
 
-  // 1. Verify existence & ownership
   const [existingDoc] = await db
     .select()
     .from(documents)
-    .where(eq(documents.id, id))
+    .where(and(eq(documents.id, id), eq(documents.isArchived, false)))
     .limit(1);
 
   if (!existingDoc) {
@@ -207,7 +265,6 @@ export const deleteDocument = asyncHandler(async (req, res) => {
     throw new AppError('Only the document owner can delete this document', 403);
   }
 
-  // 2. Delete document from database
   await db.delete(documents).where(eq(documents.id, id));
 
   res.status(200).json({

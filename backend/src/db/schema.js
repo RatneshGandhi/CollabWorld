@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, uuid, varchar, jsonb, boolean, integer, index } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, timestamp, uuid, varchar, jsonb, boolean, integer, index, uniqueIndex } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 // Users Table
@@ -25,7 +25,26 @@ export const documents = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    // Composite index for rapid dashboard listing queries
     index('owner_active_idx').on(table.ownerId, table.isArchived, table.updatedAt),
+  ]
+);
+
+// Document Collaborators Junction Table
+export const documentCollaborators = pgTable(
+  'document_collaborators',
+  {
+    id: serial('id').primaryKey(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => documents.id, { onDelete: 'cascade' }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: varchar('role', { length: 20 }).notNull().default('editor'), // 'viewer' | 'editor'
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('doc_user_unique_idx').on(table.documentId, table.userId),
+    index('collaborator_user_idx').on(table.userId),
   ]
 );

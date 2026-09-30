@@ -28,3 +28,20 @@ export const updateDocumentTitleSchema = z.object({
 export const saveDocumentDataSchema = z.object({
   data: z.record(z.any(), { required_error: 'Document content data is required' }),
 });
+
+export const addCollaboratorSchema = z.object({
+  email: z
+    .string({ required_error: 'Collaborator email is required' })
+    .trim()
+    .toLowerCase()
+    .email('Please provide a valid email address'),
+  role: z.enum(['viewer', 'editor'], {
+    errorMap: () => ({ message: "Role must be either 'viewer' or 'editor'" }),
+  }).default('editor'),
+});
+
+// Validates removing a collaborator (documentId param + userId param)
+export const collaboratorParamsSchema = z.object({
+  id: z.string().uuid('Invalid document ID format'),
+  userId: z.coerce.number().int().positive('Invalid user ID'),
+});

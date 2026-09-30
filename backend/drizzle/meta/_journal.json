@@ -15,6 +15,13 @@
       "when": 1790322238414,
       "tag": "0001_quick_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790757352049,
+      "tag": "0002_busy_jimmy_woo",
+      "breakpoints": true
     }
   ]
 }
