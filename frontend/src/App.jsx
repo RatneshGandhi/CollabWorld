@@ -4,25 +4,27 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { PublicRoute } from './components/PublicRoute';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
-import { DashboardPreview } from './pages/DashboardPreview';
+import { DashboardPage } from './pages/DashboardPage';
+import { EditorPlaceholder } from './pages/EditorPlaceholder';
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          {/* Public Authentication Routes (accessible only when logged out) */}
+          {/* Public Auth Routes */}
           <Route element={<PublicRoute />}>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
           </Route>
 
-          {/* Protected Application Routes (accessible only when authenticated) */}
+          {/* Protected Application Routes */}
           <Route element={<ProtectedRoute />}>
-            <Route path="/dashboard" element={<DashboardPreview />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/document/:id" element={<EditorPlaceholder />} />
           </Route>
 
-          {/* Default Redirects */}
+          {/* Fallbacks */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route
             path="*"
