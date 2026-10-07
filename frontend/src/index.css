@@ -25,3 +25,157 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* ==========================================================================
+   Google Docs Quill Snow Theme Overrides
+   ========================================================================== */
+
+/* Docked Top Toolbar */
+.ql-toolbar.ql-snow {
+  width: 100% !important;
+  background-color: #ffffff !important;
+  border: none !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  padding: 8px 16px !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 2px !important;
+  position: sticky !important;
+  top: 64px !important; /* Below 64px header */
+  z-index: 20 !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
+}
+
+.ql-toolbar.ql-snow .ql-formats {
+  margin-right: 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+/* Toolbar button styling & hover states */
+.ql-snow .ql-stroke {
+  stroke: #475569 !important;
+}
+
+.ql-snow .ql-fill {
+  fill: #475569 !important;
+}
+
+.ql-snow .ql-picker {
+  color: #475569 !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+}
+
+.ql-toolbar.ql-snow button:hover .ql-stroke,
+.ql-toolbar.ql-snow button.ql-active .ql-stroke,
+.ql-snow .ql-picker-label:hover .ql-stroke {
+  stroke: #2563eb !important;
+}
+
+.ql-toolbar.ql-snow button:hover .ql-fill,
+.ql-toolbar.ql-snow button.ql-active .ql-fill,
+.ql-snow .ql-picker-label:hover .ql-fill {
+  fill: #2563eb !important;
+}
+
+.ql-toolbar.ql-snow button:hover,
+.ql-toolbar.ql-snow button.ql-active,
+.ql-snow .ql-picker-label:hover {
+  background-color: #eff6ff !important;
+  border-radius: 6px !important;
+}
+
+/* Gray Document Workspace */
+.ql-container.ql-snow {
+  width: 100% !important;
+  flex: 1 !important;
+  display: flex !important;
+  justify-content: center !important;
+  background-color: #f1f5f9 !important; /* Neutral slate-100 gray workspace */
+  padding: 32px 16px 80px 16px !important;
+  border: none !important;
+  font-family: inherit !important;
+  box-sizing: border-box !important;
+}
+
+/* Google Docs White Page Canvas */
+.ql-container.ql-snow .ql-editor {
+  background-color: #ffffff !important;
+  width: 100% !important;
+  max-width: 816px !important; /* Standard 8.5" width at 96 DPI */
+  min-height: 1056px !important; /* Standard 11" letter height */
+  margin: 0 auto !important;
+  padding: 56px 64px !important;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    0 10px 15px -3px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(226, 232, 240, 0.9) !important;
+  border-radius: 2px !important;
+  outline: none !important;
+  font-size: 15px !important;
+  line-height: 1.65 !important;
+  color: #1e293b !important;
+  box-sizing: border-box !important;
+}
+
+/* Focus outline on page */
+.ql-container.ql-snow .ql-editor:focus {
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.1),
+    0 0 0 1px #93c5fd !important;
+}
+
+/* Headings & Typography */
+.ql-container.ql-snow .ql-editor h1 {
+  font-size: 28px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+  margin-top: 18px !important;
+  margin-bottom: 8px !important;
+}
+
+.ql-container.ql-snow .ql-editor h2 {
+  font-size: 22px !important;
+  font-weight: 600 !important;
+  color: #1e293b !important;
+  margin-top: 14px !important;
+  margin-bottom: 6px !important;
+}
+
+.ql-container.ql-snow .ql-editor h3 {
+  font-size: 18px !important;
+  font-weight: 600 !important;
+  color: #334155 !important;
+  margin-top: 12px !important;
+  margin-bottom: 4px !important;
+}
+
+.ql-container.ql-snow .ql-editor p {
+  margin-bottom: 12px !important;
+}
+
+.ql-container.ql-snow .ql-editor blockquote {
+  border-left: 4px solid #3b82f6 !important;
+  padding-left: 16px !important;
+  color: #64748b !important;
+  font-style: italic !important;
+  margin: 12px 0 !important;
+}
+
+.ql-container.ql-snow .ql-editor pre.ql-syntax {
+  background-color: #0f172a !important;
+  color: #e2e8f0 !important;
+  padding: 16px !important;
+  border-radius: 8px !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 13px !important;
+  overflow-x: auto !important;
+}
+
+/* Read-only mode */
+.ql-container.ql-snow .ql-editor.ql-disabled {
+  cursor: default !important;
+}

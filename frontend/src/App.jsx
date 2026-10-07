@@ -5,7 +5,7 @@ import { PublicRoute } from './components/PublicRoute';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
-import { EditorPlaceholder } from './pages/EditorPlaceholder';
+import { EditorPage } from './pages/EditorPage';
 
 function App() {
   return (
@@ -21,7 +21,7 @@ function App() {
           {/* Protected Application Routes */}
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/document/:id" element={<EditorPlaceholder />} />
+            <Route path="/document/:id" element={<EditorPage />} />
           </Route>
 
           {/* Fallbacks */}
