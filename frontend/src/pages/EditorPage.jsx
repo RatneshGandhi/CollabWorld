@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { docService } from '../services/docService';
 import { EditorHeader } from '../components/editor/EditorHeader';
@@ -10,13 +10,21 @@ export const EditorPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
 
+  // Document metadata state
   const [document, setDocument] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
-  const [quillInstance, setQuillInstance] = useState(null);
 
-  // 1. Fetch document on mount
+  // Editor instance & save state
+  const [quillInstance, setQuillInstance] = useState(null);
+  const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'unsaved' | 'saving' | 'error'
+
+  // Refs for debouncing and clean unmounts
+  const saveTimerRef = useRef(null);
+  const isInitialLoadRef = useRef(true);
+
+  // 1. Fetch document metadata & content on mount
   useEffect(() => {
     let isMounted = true;
 
@@ -28,6 +36,8 @@ export const EditorPage = () => {
         if (isMounted) {
           setDocument(data.document);
           setUserRole(data.userRole);
+          // Sync browser tab title
+          window.document.title = `${data.document.title || 'Untitled Document'} — CollabSpace Docs`;
         }
       } catch (err) {
         if (isMounted) {
@@ -46,10 +56,12 @@ export const EditorPage = () => {
 
     return () => {
       isMounted = false;
+      // Reset tab title on leave
+      window.document.title = 'CollabSpace — Real-Time Collaborative Workspace';
     };
   }, [id]);
 
-  // 2. Hydrate Quill with document Delta once BOTH Quill and Document are loaded
+  // 2. Hydrate Quill with initial Delta once both Quill and Document are ready
   useEffect(() => {
     if (!quillInstance || !document) return;
 
@@ -62,9 +74,84 @@ export const EditorPage = () => {
     } else {
       quillInstance.enable(true);
     }
+
+    // Mark initial loading as complete after a short tick
+    setTimeout(() => {
+      isInitialLoadRef.current = false;
+    }, 100);
   }, [quillInstance, document?.id, userRole]);
 
-  // Stable callback reference prevents child re-render loop
+  // 3. Save function that persists Delta snapshot to PostgreSQL
+  const performSave = useCallback(async () => {
+    if (!quillInstance || userRole === 'viewer') return;
+
+    setSaveStatus('saving');
+    try {
+      const contents = quillInstance.getContents();
+      await docService.saveDocumentData(id, contents);
+      setSaveStatus('saved');
+    } catch (err) {
+      console.error('Failed to auto-save document:', err);
+      setSaveStatus('error');
+    }
+  }, [id, quillInstance, userRole]);
+
+  // 4. Attach Quill 'text-change' listener for Debounced Auto-Save
+  useEffect(() => {
+    if (!quillInstance || userRole === 'viewer') return;
+
+    const handleTextChange = (delta, oldDelta, source) => {
+      // CRITICAL: Ignore programmatic changes (e.g. setContents on mount)
+      if (source !== 'user' || isInitialLoadRef.current) return;
+
+      setSaveStatus('unsaved');
+
+      // Clear existing debounce timer
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+
+      // Schedule new save after 1500ms of typing inactivity
+      saveTimerRef.current = setTimeout(() => {
+        performSave();
+      }, 1500);
+    };
+
+    quillInstance.on('text-change', handleTextChange);
+
+    return () => {
+      quillInstance.off('text-change', handleTextChange);
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, [quillInstance, userRole, performSave]);
+
+  // 5. Browser tab exit protection (warn if unsaved)
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (saveStatus === 'unsaved' || saveStatus === 'saving') {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saveStatus]);
+
+  // 6. Inline Title Renaming Handler
+  const handleRenameTitle = async (newTitle) => {
+    try {
+      const updated = await docService.updateDocumentTitle(id, newTitle);
+      setDocument((prev) => ({ ...prev, title: updated.document.title }));
+      window.document.title = `${updated.document.title} — CollabSpace Docs`;
+    } catch (err) {
+      console.error('Failed to rename document title:', err);
+    }
+  };
+
+  // 7. Stable callback ref for TextEditor
   const handleEditorReady = useCallback((q) => {
     setQuillInstance(q);
   }, []);
@@ -109,10 +196,13 @@ export const EditorPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
-      {/* Top Header */}
+      {/* Top Header with Inline Renaming and Reactive Save Status */}
       <EditorHeader
         document={document}
         userRole={userRole}
+        saveStatus={saveStatus}
+        onRenameTitle={handleRenameTitle}
+        onRetrySave={performSave}
         onOpenShare={() => {
           alert('Share Modal will be connected on Day 12!');
         }}

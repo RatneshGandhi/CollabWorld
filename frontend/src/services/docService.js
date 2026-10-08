@@ -40,6 +40,16 @@ export const docService = {
   },
 
   /**
+   * Save document delta content (Auto-save)
+   * @param {string} id
+   * @param {Object} data (Quill Delta object)
+   */
+  async saveDocumentData(id, data) {
+    const response = await api.put(`/documents/${id}/save`, { data });
+    return response.data.data;
+  },
+
+  /**
    * Delete a document (Owner only)
    * @param {string} id
    */
