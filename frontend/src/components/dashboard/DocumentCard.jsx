@@ -6,14 +6,10 @@ import {
   Edit2,
   Trash2,
   ExternalLink,
-  Shield,
-  Users,
+  Share2,
   Clock,
 } from 'lucide-react';
 
-/**
- * Format timestamp into relative readable string
- */
 const formatRelativeTime = (dateString) => {
   if (!dateString) return 'Recently';
   const date = new Date(dateString);
@@ -36,6 +32,7 @@ export const DocumentCard = ({
   document,
   onOpenRename,
   onOpenDelete,
+  onOpenShare,
   viewMode = 'grid',
 }) => {
   const navigate = useNavigate();
@@ -45,7 +42,6 @@ export const DocumentCard = ({
   const isOwner = document.userRole === 'owner';
   const isViewer = document.userRole === 'viewer';
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleOutsideClick = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target)) {
@@ -103,21 +99,36 @@ export const DocumentCard = ({
                 className="w-full text-left px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
               >
                 <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                Open in Editor
+                Open
               </button>
+
               {!isViewer && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onOpenRename(document);
-                  }}
-                  className="w-full text-left px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
-                >
-                  <Edit2 className="w-3.5 h-3.5 text-slate-400" />
-                  Rename
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onOpenShare(document);
+                    }}
+                    className="w-full text-left px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-slate-400" />
+                    Share
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onOpenRename(document);
+                    }}
+                    className="w-full text-left px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-slate-400" />
+                    Rename
+                  </button>
+                </>
               )}
+
               {isOwner && (
                 <button
                   type="button"
@@ -150,7 +161,6 @@ export const DocumentCard = ({
           <FileText className="w-4 h-4" />
         </div>
 
-        {/* Faux Document Content Lines */}
         <div className="space-y-1.5 opacity-40 group-hover:opacity-70 transition-opacity">
           <div className="h-1.5 bg-slate-300 rounded w-3/4"></div>
           <div className="h-1.5 bg-slate-300 rounded w-full"></div>
@@ -208,17 +218,30 @@ export const DocumentCard = ({
               </button>
 
               {!isViewer && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onOpenRename(document);
-                  }}
-                  className="w-full text-left px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
-                >
-                  <Edit2 className="w-3.5 h-3.5 text-slate-400" />
-                  Rename
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onOpenShare(document);
+                    }}
+                    className="w-full text-left px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-slate-400" />
+                    Share
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onOpenRename(document);
+                    }}
+                    className="w-full text-left px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-slate-400" />
+                    Rename
+                  </button>
+                </>
               )}
 
               {isOwner && (

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { docService } from '../services/docService';
 import { EditorHeader } from '../components/editor/EditorHeader';
 import { TextEditor } from '../components/editor/TextEditor';
+import { ShareModal } from '../components/editor/ShareModal';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
@@ -19,6 +20,9 @@ export const EditorPage = () => {
   // Editor instance & save state
   const [quillInstance, setQuillInstance] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'unsaved' | 'saving' | 'error'
+
+  // Share Modal State
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
   // Refs for debouncing and clean unmounts
   const saveTimerRef = useRef(null);
@@ -203,14 +207,20 @@ export const EditorPage = () => {
         saveStatus={saveStatus}
         onRenameTitle={handleRenameTitle}
         onRetrySave={performSave}
-        onOpenShare={() => {
-          alert('Share Modal will be connected on Day 12!');
-        }}
+        onOpenShare={() => setIsShareModalOpen(true)}
       />
 
       {/* Editor Canvas */}
       <TextEditor
         onEditorReady={handleEditorReady}
+        userRole={userRole}
+      />
+
+      {/* In-Editor Share Modal */}
+      <ShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        document={document}
         userRole={userRole}
       />
     </div>

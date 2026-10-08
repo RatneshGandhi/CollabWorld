@@ -103,10 +103,12 @@
 
 /* Google Docs White Page Canvas */
 .ql-container.ql-snow .ql-editor {
+  position: relative !important;
   background-color: #ffffff !important;
   width: 100% !important;
   max-width: 816px !important; /* Standard 8.5" width at 96 DPI */
   min-height: 1056px !important; /* Standard 11" letter height */
+  height: auto !important;
   margin: 0 auto !important;
   padding: 56px 64px !important;
   box-shadow:
@@ -119,6 +121,33 @@
   line-height: 1.65 !important;
   color: #1e293b !important;
   box-sizing: border-box !important;
+}
+
+/* Placeholder aligned with content padding inside white canvas */
+.ql-container.ql-snow .ql-editor.ql-blank::before {
+  position: absolute !important;
+  left: 64px !important;
+  right: 64px !important;
+  top: 56px !important;
+  color: #94a3b8 !important;
+  font-style: italic !important;
+  font-size: 15px !important;
+  line-height: 1.65 !important;
+  pointer-events: none !important;
+}
+
+@media (max-width: 640px) {
+  .ql-container.ql-snow {
+    padding: 16px 8px 40px 8px !important;
+  }
+  .ql-container.ql-snow .ql-editor {
+    padding: 32px 20px !important;
+  }
+  .ql-container.ql-snow .ql-editor.ql-blank::before {
+    left: 20px !important;
+    right: 20px !important;
+    top: 32px !important;
+  }
 }
 
 /* Focus outline on page */

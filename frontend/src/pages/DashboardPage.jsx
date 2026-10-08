@@ -8,6 +8,7 @@ import { DocumentCard } from '../components/dashboard/DocumentCard';
 import { RenameModal } from '../components/dashboard/RenameModal';
 import { DeleteModal } from '../components/dashboard/DeleteModal';
 import { Alert } from '../components/ui/Alert';
+import { ShareModal } from '../components/editor/ShareModal';
 import {
   FileText,
   Search,
@@ -30,6 +31,7 @@ export const DashboardPage = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [shareTarget, setShareTarget] = useState(null);
 
   // UI state
   const [searchQuery, setSearchQuery] = useState('');
@@ -284,6 +286,7 @@ export const DashboardPage = () => {
                 document={doc}
                 onOpenRename={(d) => setRenameTarget(d)}
                 onOpenDelete={(d) => setDeleteTarget(d)}
+                onOpenShare={(d) => setShareTarget(d)}
                 viewMode="grid"
               />
             ))}
@@ -296,6 +299,7 @@ export const DashboardPage = () => {
                 document={doc}
                 onOpenRename={(d) => setRenameTarget(d)}
                 onOpenDelete={(d) => setDeleteTarget(d)}
+                onOpenShare={(d) => setShareTarget(d)}
                 viewMode="list"
               />
             ))}
@@ -318,6 +322,13 @@ export const DashboardPage = () => {
         onClose={() => setDeleteTarget(null)}
         onConfirmDelete={handleDeleteDocument}
         isLoading={modalLoading}
+      />
+
+      <ShareModal
+        isOpen={!!shareTarget}
+        document={shareTarget}
+        userRole={shareTarget?.userRole}
+        onClose={() => setShareTarget(null)}
       />
     </div>
   );
