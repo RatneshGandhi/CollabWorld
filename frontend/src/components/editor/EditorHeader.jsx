@@ -6,11 +6,10 @@ import {
   Share2,
   Eye,
   Edit3,
-  CloudCheck,
-  Cloud,
   Loader2,
   AlertCircle,
-  RefreshCw,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 
@@ -18,6 +17,7 @@ export const EditorHeader = ({
   document,
   userRole,
   saveStatus = 'saved', // 'saving' | 'saved' | 'unsaved' | 'error'
+  socketStatus = 'connected', // 'connecting' | 'connected' | 'disconnected'
   onRenameTitle,
   onRetrySave,
   onOpenShare,
@@ -125,8 +125,9 @@ export const EditorHeader = ({
             </span>
           </div>
 
-          {/* Dynamic Save Status Indicator */}
-          <div className="flex items-center gap-2 text-xs">
+          {/* Dynamic Status Bar: Save Status + WebSocket Live Indicator */}
+          <div className="flex items-center gap-3 text-xs">
+            {/* Save Status Indicator */}
             {isViewer ? (
               <span className="text-amber-600 font-medium flex items-center gap-1">
                 <Eye className="w-3.5 h-3.5" /> Read-Only Mode
@@ -153,6 +154,29 @@ export const EditorHeader = ({
               <span className="text-slate-500 flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
                 Saved to Cloud
+              </span>
+            )}
+
+            <span className="text-slate-300">•</span>
+
+            {/* WebSocket Connection Status Badge */}
+            {socketStatus === 'connected' ? (
+              <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full text-[11px] font-medium flex items-center gap-1.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                Live Sync
+              </span>
+            ) : socketStatus === 'connecting' ? (
+              <span className="text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full text-[11px] font-medium flex items-center gap-1.5">
+                <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+                Connecting...
+              </span>
+            ) : (
+              <span className="text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full text-[11px] font-medium flex items-center gap-1.5">
+                <WifiOff className="w-3 h-3 text-red-500" />
+                Offline
               </span>
             )}
           </div>

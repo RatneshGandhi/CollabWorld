@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { docService } from '../services/docService';
+import { socketService } from '../services/socketService';
 import { EditorHeader } from '../components/editor/EditorHeader';
 import { TextEditor } from '../components/editor/TextEditor';
 import { ShareModal } from '../components/editor/ShareModal';
@@ -10,12 +12,16 @@ import { Button } from '../components/ui/Button';
 export const EditorPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { token } = useAuth();
 
   // Document metadata state
   const [document, setDocument] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // WebSocket connection state: 'connecting' | 'connected' | 'disconnected'
+  const [socketStatus, setSocketStatus] = useState('connecting');
 
   // Editor instance & save state
   const [quillInstance, setQuillInstance] = useState(null);
@@ -40,7 +46,6 @@ export const EditorPage = () => {
         if (isMounted) {
           setDocument(data.document);
           setUserRole(data.userRole);
-          // Sync browser tab title
           window.document.title = `${data.document.title || 'Untitled Document'} — CollabSpace Docs`;
         }
       } catch (err) {
@@ -60,12 +65,71 @@ export const EditorPage = () => {
 
     return () => {
       isMounted = false;
-      // Reset tab title on leave
       window.document.title = 'CollabSpace — Real-Time Collaborative Workspace';
     };
   }, [id]);
 
-  // 2. Hydrate Quill with initial Delta once both Quill and Document are ready
+  // 2. Connect to Socket.IO & join document room once Document & Token are available
+  useEffect(() => {
+    if (!id || !token || !document) return;
+
+    setSocketStatus('connecting');
+
+    // Connect WebSocket with current JWT
+    const socket = socketService.connect(token);
+
+    if (!socket) return;
+
+    const handleConnect = async () => {
+      console.log('[EditorPage] Socket connected, joining document room:', id);
+      const res = await socketService.joinDocument(id);
+      if (res?.success) {
+        setSocketStatus('connected');
+        console.log('[EditorPage] Successfully joined room with role:', res.userRole);
+      } else {
+        setSocketStatus('disconnected');
+        console.error('[EditorPage] Failed to join document room:', res?.error);
+      }
+    };
+
+    const handleDisconnect = () => {
+      setSocketStatus('disconnected');
+    };
+
+    const handleConnectError = () => {
+      setSocketStatus('disconnected');
+    };
+
+    const handleUserJoined = (data) => {
+      console.log('[EditorPage] Peer collaborator joined room:', data.user.name);
+    };
+
+    const handleUserLeft = (data) => {
+      console.log('[EditorPage] Peer collaborator left room:', data.user.name);
+    };
+
+    // If socket already connected, join immediately
+    if (socket.connected) {
+      handleConnect();
+    }
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('connect_error', handleConnectError);
+    socket.on('user-joined', handleUserJoined);
+    socket.on('user-left', handleUserLeft);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
+      socket.off('user-joined', handleUserJoined);
+      socket.off('user-left', handleUserLeft);
+      socketService.leaveDocument(id);
+    };
+  }, [id, token, document?.id]);
+
+  // 3. Hydrate Quill with initial Delta once both Quill and Document are ready
   useEffect(() => {
     if (!quillInstance || !document) return;
 
@@ -79,13 +143,12 @@ export const EditorPage = () => {
       quillInstance.enable(true);
     }
 
-    // Mark initial loading as complete after a short tick
     setTimeout(() => {
       isInitialLoadRef.current = false;
     }, 100);
   }, [quillInstance, document?.id, userRole]);
 
-  // 3. Save function that persists Delta snapshot to PostgreSQL
+  // 4. Save function that persists Delta snapshot to PostgreSQL
   const performSave = useCallback(async () => {
     if (!quillInstance || userRole === 'viewer') return;
 
@@ -100,22 +163,19 @@ export const EditorPage = () => {
     }
   }, [id, quillInstance, userRole]);
 
-  // 4. Attach Quill 'text-change' listener for Debounced Auto-Save
+  // 5. Attach Quill 'text-change' listener for Debounced Auto-Save
   useEffect(() => {
     if (!quillInstance || userRole === 'viewer') return;
 
     const handleTextChange = (delta, oldDelta, source) => {
-      // CRITICAL: Ignore programmatic changes (e.g. setContents on mount)
       if (source !== 'user' || isInitialLoadRef.current) return;
 
       setSaveStatus('unsaved');
 
-      // Clear existing debounce timer
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
 
-      // Schedule new save after 1500ms of typing inactivity
       saveTimerRef.current = setTimeout(() => {
         performSave();
       }, 1500);
@@ -131,7 +191,7 @@ export const EditorPage = () => {
     };
   }, [quillInstance, userRole, performSave]);
 
-  // 5. Browser tab exit protection (warn if unsaved)
+  // 6. Browser tab exit protection (warn if unsaved)
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (saveStatus === 'unsaved' || saveStatus === 'saving') {
@@ -144,7 +204,7 @@ export const EditorPage = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [saveStatus]);
 
-  // 6. Inline Title Renaming Handler
+  // 7. Inline Title Renaming Handler
   const handleRenameTitle = async (newTitle) => {
     try {
       const updated = await docService.updateDocumentTitle(id, newTitle);
@@ -155,7 +215,7 @@ export const EditorPage = () => {
     }
   };
 
-  // 7. Stable callback ref for TextEditor
+  // 8. Stable callback ref for TextEditor
   const handleEditorReady = useCallback((q) => {
     setQuillInstance(q);
   }, []);
@@ -200,11 +260,12 @@ export const EditorPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
-      {/* Top Header with Inline Renaming and Reactive Save Status */}
+      {/* Top Header with Inline Renaming, Save Status, Socket Status & Share Trigger */}
       <EditorHeader
         document={document}
         userRole={userRole}
         saveStatus={saveStatus}
+        socketStatus={socketStatus}
         onRenameTitle={handleRenameTitle}
         onRetrySave={performSave}
         onOpenShare={() => setIsShareModalOpen(true)}
