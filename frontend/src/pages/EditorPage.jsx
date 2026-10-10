@@ -30,7 +30,7 @@ export const EditorPage = () => {
   // Share Modal State
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
-  // Refs for debouncing and clean unmounts
+  // Refs for debouncing, clean unmounts, and initial load guard
   const saveTimerRef = useRef(null);
   const isInitialLoadRef = useRef(true);
 
@@ -69,15 +69,13 @@ export const EditorPage = () => {
     };
   }, [id]);
 
-  // 2. Connect to Socket.IO & join document room once Document & Token are available
+  // 2. Connect to Socket.IO & join document room
   useEffect(() => {
     if (!id || !token || !document) return;
 
     setSocketStatus('connecting');
 
-    // Connect WebSocket with current JWT
     const socket = socketService.connect(token);
-
     if (!socket) return;
 
     const handleConnect = async () => {
@@ -108,7 +106,21 @@ export const EditorPage = () => {
       console.log('[EditorPage] Peer collaborator left room:', data.user.name);
     };
 
-    // If socket already connected, join immediately
+    // Real-Time Delta Receiver: Apply remote changes from peers instantly
+    const handleReceiveChanges = (data) => {
+      if (!quillInstance || !data?.delta) return;
+      // CRITICAL: Applying with quillInstance.updateContents triggers 'text-change' with source === 'api'
+      // Our text-change listener ignores source !== 'user', completely preventing echo loops!
+      quillInstance.updateContents(data.delta);
+    };
+
+    // Real-Time Title Sync: Update title when a peer renames it
+    const handleReceiveTitleChange = (data) => {
+      if (!data?.title) return;
+      setDocument((prev) => ({ ...prev, title: data.title }));
+      window.document.title = `${data.title} — CollabSpace Docs`;
+    };
+
     if (socket.connected) {
       handleConnect();
     }
@@ -118,6 +130,8 @@ export const EditorPage = () => {
     socket.on('connect_error', handleConnectError);
     socket.on('user-joined', handleUserJoined);
     socket.on('user-left', handleUserLeft);
+    socket.on('receive-changes', handleReceiveChanges);
+    socket.on('receive-title-change', handleReceiveTitleChange);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -125,9 +139,11 @@ export const EditorPage = () => {
       socket.off('connect_error', handleConnectError);
       socket.off('user-joined', handleUserJoined);
       socket.off('user-left', handleUserLeft);
+      socket.off('receive-changes', handleReceiveChanges);
+      socket.off('receive-title-change', handleReceiveTitleChange);
       socketService.leaveDocument(id);
     };
-  }, [id, token, document?.id]);
+  }, [id, token, document?.id, quillInstance]);
 
   // 3. Hydrate Quill with initial Delta once both Quill and Document are ready
   useEffect(() => {
@@ -163,15 +179,21 @@ export const EditorPage = () => {
     }
   }, [id, quillInstance, userRole]);
 
-  // 5. Attach Quill 'text-change' listener for Debounced Auto-Save
+  // 5. Attach Quill 'text-change' listener for Real-Time Broadcasting & Debounced Auto-Save
   useEffect(() => {
     if (!quillInstance || userRole === 'viewer') return;
 
     const handleTextChange = (delta, oldDelta, source) => {
+      // CRITICAL: Ignore programmatic changes (e.g. setContents on mount or receive-changes from peers)
       if (source !== 'user' || isInitialLoadRef.current) return;
 
+      // 1. BROADCAST DELTA TO PEERS IMMEDIATELY (<15ms)
+      socketService.sendChanges(id, delta);
+
+      // 2. Mark local save status as unsaved
       setSaveStatus('unsaved');
 
+      // 3. Debounce database persistence snapshot (1500ms inactivity)
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
@@ -189,7 +211,7 @@ export const EditorPage = () => {
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [quillInstance, userRole, performSave]);
+  }, [quillInstance, userRole, id, performSave]);
 
   // 6. Browser tab exit protection (warn if unsaved)
   useEffect(() => {
@@ -204,12 +226,15 @@ export const EditorPage = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [saveStatus]);
 
-  // 7. Inline Title Renaming Handler
+  // 7. Inline Title Renaming Handler (Updates DB & Broadcasts to Peers)
   const handleRenameTitle = async (newTitle) => {
     try {
       const updated = await docService.updateDocumentTitle(id, newTitle);
       setDocument((prev) => ({ ...prev, title: updated.document.title }));
       window.document.title = `${updated.document.title} — CollabSpace Docs`;
+
+      // Broadcast title rename to peer collaborators in the room
+      socketService.sendTitleChange(id, updated.document.title);
     } catch (err) {
       console.error('Failed to rename document title:', err);
     }

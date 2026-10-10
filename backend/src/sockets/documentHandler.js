@@ -101,6 +101,52 @@ export const registerDocumentHandlers = (io, socket) => {
   });
 
   /**
+   * Handle incoming Quill Delta changes from an active editor
+   * Broadcasts delta payload only to peer collaborators in the same room
+   */
+  socket.on('send-changes', ({ documentId, delta }) => {
+    if (!documentId || !delta) return;
+
+    // Security Check: Verify socket is currently inside this document room
+    if (socket.currentDocumentId !== documentId) {
+      console.warn(`[Socket Delta] Rejected delta: Socket ${socket.id} not in room ${documentId}`);
+      return;
+    }
+
+    // Role Check: Viewers are strictly prohibited from broadcasting changes
+    if (socket.userRole === 'viewer') {
+      console.warn(`[Socket Delta] Rejected edit attempt from viewer ${socket.user.email} in room ${documentId}`);
+      return;
+    }
+
+    // Broadcast delta to all other sockets in this room (excluding sender)
+    socket.to(documentId).emit('receive-changes', {
+      delta,
+      senderId: socket.user.id,
+      senderName: socket.user.name,
+      timestamp: Date.now(),
+    });
+  });
+
+  /**
+   * Handle live document title renaming broadcast
+   */
+  socket.on('send-title-change', ({ documentId, title }) => {
+    if (!documentId || !title) return;
+
+    if (socket.currentDocumentId !== documentId || socket.userRole === 'viewer') {
+      return;
+    }
+
+    // Broadcast updated title to all other peers in the room
+    socket.to(documentId).emit('receive-title-change', {
+      title,
+      senderId: socket.user.id,
+      senderName: socket.user.name,
+    });
+  });
+
+  /**
    * Handle leaving a document room explicitly
    */
   socket.on('leave-document', ({ documentId }) => {
@@ -124,7 +170,6 @@ export const registerDocumentHandlers = (io, socket) => {
    * Handle socket disconnection (browser closed, tab refreshed, network dropped)
    */
   socket.on('disconnecting', () => {
-    // Notify all rooms the socket was part of
     for (const room of socket.rooms) {
       if (room !== socket.id) {
         socket.to(room).emit('user-left', {

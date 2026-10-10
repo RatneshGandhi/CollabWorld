@@ -19,7 +19,7 @@ class SocketService {
       return null;
     }
 
-    // If socket exists and is connected with the same token, reuse
+    // If socket exists and is connected, reuse
     if (this.socket && this.socket.connected) {
       return this.socket;
     }
@@ -71,6 +71,28 @@ class SocketService {
         resolve(response);
       });
     });
+  }
+
+  /**
+   * Broadcast Delta changes to peers in the document room
+   * @param {string} documentId
+   * @param {Object} delta - Quill Delta object
+   */
+  sendChanges(documentId, delta) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('send-changes', { documentId, delta });
+    }
+  }
+
+  /**
+   * Broadcast updated document title to peers in the document room
+   * @param {string} documentId
+   * @param {string} title
+   */
+  sendTitleChange(documentId, title) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('send-title-change', { documentId, title });
+    }
   }
 
   /**
