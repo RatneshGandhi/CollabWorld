@@ -23,7 +23,7 @@ export const EditorPage = () => {
   // WebSocket connection state: 'connecting' | 'connected' | 'disconnected'
   const [socketStatus, setSocketStatus] = useState('connecting');
 
-  // Editor instance & save state
+  // Editor instance & synchronized save state
   const [quillInstance, setQuillInstance] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'unsaved' | 'saving' | 'error'
 
@@ -109,8 +109,6 @@ export const EditorPage = () => {
     // Real-Time Delta Receiver: Apply remote changes from peers instantly
     const handleReceiveChanges = (data) => {
       if (!quillInstance || !data?.delta) return;
-      // CRITICAL: Applying with quillInstance.updateContents triggers 'text-change' with source === 'api'
-      // Our text-change listener ignores source !== 'user', completely preventing echo loops!
       quillInstance.updateContents(data.delta);
     };
 
@@ -119,6 +117,17 @@ export const EditorPage = () => {
       if (!data?.title) return;
       setDocument((prev) => ({ ...prev, title: data.title }));
       window.document.title = `${data.title} — CollabSpace Docs`;
+    };
+
+    // Synchronized Save Status: Reflect room-wide persistence updates
+    const handleSaveStatus = (data) => {
+      if (data?.status === 'saving') {
+        setSaveStatus('saving');
+      } else if (data?.status === 'saved') {
+        setSaveStatus('saved');
+      } else if (data?.status === 'error') {
+        setSaveStatus('error');
+      }
     };
 
     if (socket.connected) {
@@ -132,6 +141,7 @@ export const EditorPage = () => {
     socket.on('user-left', handleUserLeft);
     socket.on('receive-changes', handleReceiveChanges);
     socket.on('receive-title-change', handleReceiveTitleChange);
+    socket.on('save-status', handleSaveStatus);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -141,6 +151,7 @@ export const EditorPage = () => {
       socket.off('user-left', handleUserLeft);
       socket.off('receive-changes', handleReceiveChanges);
       socket.off('receive-title-change', handleReceiveTitleChange);
+      socket.off('save-status', handleSaveStatus);
       socketService.leaveDocument(id);
     };
   }, [id, token, document?.id, quillInstance]);
@@ -164,17 +175,30 @@ export const EditorPage = () => {
     }, 100);
   }, [quillInstance, document?.id, userRole]);
 
-  // 4. Save function that persists Delta snapshot to PostgreSQL
+  // 4. Dual-Engine Save Function: WebSocket persistence with automatic REST fallback
   const performSave = useCallback(async () => {
     if (!quillInstance || userRole === 'viewer') return;
 
     setSaveStatus('saving');
+    const contents = quillInstance.getContents();
+
     try {
-      const contents = quillInstance.getContents();
+      // 1. Primary Engine: Persist over WebSocket pipeline
+      const rawSocket = socketService.getRawSocket();
+      if (rawSocket && rawSocket.connected) {
+        const res = await socketService.saveDocument(id, contents);
+        if (res?.success) {
+          setSaveStatus('saved');
+          return;
+        }
+      }
+
+      // 2. Fallback Engine: If socket unavailable or rejected, persist via REST API
+      console.warn('[EditorPage] WebSocket save unavailable, falling back to REST PUT endpoint');
       await docService.saveDocumentData(id, contents);
       setSaveStatus('saved');
     } catch (err) {
-      console.error('Failed to auto-save document:', err);
+      console.error('[EditorPage] Failed to auto-save document:', err);
       setSaveStatus('error');
     }
   }, [id, quillInstance, userRole]);
@@ -184,16 +208,15 @@ export const EditorPage = () => {
     if (!quillInstance || userRole === 'viewer') return;
 
     const handleTextChange = (delta, oldDelta, source) => {
-      // CRITICAL: Ignore programmatic changes (e.g. setContents on mount or receive-changes from peers)
       if (source !== 'user' || isInitialLoadRef.current) return;
 
-      // 1. BROADCAST DELTA TO PEERS IMMEDIATELY (<15ms)
+      // 1. Broadcast Delta to peers immediately (<15ms)
       socketService.sendChanges(id, delta);
 
       // 2. Mark local save status as unsaved
       setSaveStatus('unsaved');
 
-      // 3. Debounce database persistence snapshot (1500ms inactivity)
+      // 3. Schedule debounced auto-save (1500ms inactivity)
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
@@ -233,7 +256,6 @@ export const EditorPage = () => {
       setDocument((prev) => ({ ...prev, title: updated.document.title }));
       window.document.title = `${updated.document.title} — CollabSpace Docs`;
 
-      // Broadcast title rename to peer collaborators in the room
       socketService.sendTitleChange(id, updated.document.title);
     } catch (err) {
       console.error('Failed to rename document title:', err);
@@ -285,7 +307,7 @@ export const EditorPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
-      {/* Top Header with Inline Renaming, Save Status, Socket Status & Share Trigger */}
+      {/* Top Header with Inline Renaming, Synchronized Save Status, Socket Status & Share Trigger */}
       <EditorHeader
         document={document}
         userRole={userRole}

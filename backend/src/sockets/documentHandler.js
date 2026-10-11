@@ -107,25 +107,84 @@ export const registerDocumentHandlers = (io, socket) => {
   socket.on('send-changes', ({ documentId, delta }) => {
     if (!documentId || !delta) return;
 
-    // Security Check: Verify socket is currently inside this document room
     if (socket.currentDocumentId !== documentId) {
       console.warn(`[Socket Delta] Rejected delta: Socket ${socket.id} not in room ${documentId}`);
       return;
     }
 
-    // Role Check: Viewers are strictly prohibited from broadcasting changes
     if (socket.userRole === 'viewer') {
       console.warn(`[Socket Delta] Rejected edit attempt from viewer ${socket.user.email} in room ${documentId}`);
       return;
     }
 
-    // Broadcast delta to all other sockets in this room (excluding sender)
     socket.to(documentId).emit('receive-changes', {
       delta,
       senderId: socket.user.id,
       senderName: socket.user.name,
       timestamp: Date.now(),
     });
+  });
+
+  /**
+   * Handle WebSocket-driven debounced document auto-save
+   * Persists Delta snapshot to PostgreSQL and broadcasts synchronized status to the entire room
+   */
+  socket.on('save-document', async ({ documentId, data }, callback = () => {}) => {
+    try {
+      if (!documentId || !data) {
+        return callback({ success: false, error: 'Document ID and data are required' });
+      }
+
+      // Security Check: Verify socket is inside the room
+      if (socket.currentDocumentId !== documentId) {
+        return callback({ success: false, error: 'Not in this document room' });
+      }
+
+      // Role Check: Viewers cannot trigger saves
+      if (socket.userRole === 'viewer') {
+        return callback({ success: false, error: 'Viewers cannot save changes' });
+      }
+
+      // 1. Notify all members in the room that a save operation is in progress
+      io.to(documentId).emit('save-status', {
+        status: 'saving',
+        userId: socket.user.id,
+        userName: socket.user.name,
+      });
+
+      // 2. Persist Delta snapshot directly to PostgreSQL
+      await db
+        .update(documents)
+        .set({
+          data,
+          updatedAt: new Date(),
+        })
+        .where(eq(documents.id, documentId));
+
+      const lastSavedAt = new Date().toISOString();
+
+      // 3. Acknowledge back to caller
+      callback({ success: true, lastSavedAt });
+
+      // 4. Broadcast synchronized 'saved' status to ALL room members
+      io.to(documentId).emit('save-status', {
+        status: 'saved',
+        lastSavedAt,
+        userId: socket.user.id,
+        userName: socket.user.name,
+      });
+
+      console.log(`[Socket Save] Persisted doc "${documentId}" to PostgreSQL by ${socket.user.name}`);
+    } catch (error) {
+      console.error('[Socket Save] Failed to persist document data:', error);
+      callback({ success: false, error: 'Database persistence failed' });
+
+      // Broadcast error status to room
+      io.to(documentId).emit('save-status', {
+        status: 'error',
+        error: 'Failed to persist document to cloud',
+      });
+    }
   });
 
   /**
@@ -138,7 +197,6 @@ export const registerDocumentHandlers = (io, socket) => {
       return;
     }
 
-    // Broadcast updated title to all other peers in the room
     socket.to(documentId).emit('receive-title-change', {
       title,
       senderId: socket.user.id,
@@ -167,7 +225,7 @@ export const registerDocumentHandlers = (io, socket) => {
   });
 
   /**
-   * Handle socket disconnection (browser closed, tab refreshed, network dropped)
+   * Handle socket disconnection
    */
   socket.on('disconnecting', () => {
     for (const room of socket.rooms) {

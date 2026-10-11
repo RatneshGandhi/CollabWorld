@@ -8,7 +8,6 @@ import {
   Edit3,
   Loader2,
   AlertCircle,
-  Wifi,
   WifiOff,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -125,7 +124,7 @@ export const EditorHeader = ({
             </span>
           </div>
 
-          {/* Dynamic Status Bar: Save Status + WebSocket Live Indicator */}
+          {/* Dynamic Status Bar: Synchronized Save Status + WebSocket Live Indicator */}
           <div className="flex items-center gap-3 text-xs">
             {/* Save Status Indicator */}
             {isViewer ? (
@@ -134,7 +133,7 @@ export const EditorHeader = ({
               </span>
             ) : saveStatus === 'saving' ? (
               <span className="text-blue-600 font-medium flex items-center gap-1.5 animate-pulse">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving to cloud...
               </span>
             ) : saveStatus === 'unsaved' ? (
               <span className="text-amber-600 font-medium flex items-center gap-1.5">

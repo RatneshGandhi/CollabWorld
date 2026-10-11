@@ -85,6 +85,24 @@ class SocketService {
   }
 
   /**
+   * Persist document Delta snapshot to PostgreSQL over WebSocket
+   * @param {string} documentId
+   * @param {Object} data - Full Quill Delta document data
+   * @returns {Promise<{ success: boolean, lastSavedAt?: string, error?: string }>}
+   */
+  saveDocument(documentId, data) {
+    return new Promise((resolve) => {
+      if (!this.socket || !this.socket.connected) {
+        return resolve({ success: false, error: 'Socket is not connected' });
+      }
+
+      this.socket.emit('save-document', { documentId, data }, (response) => {
+        resolve(response || { success: true });
+      });
+    });
+  }
+
+  /**
    * Broadcast updated document title to peers in the document room
    * @param {string} documentId
    * @param {string} title
