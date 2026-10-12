@@ -2,6 +2,74 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { documents, documentCollaborators } from '../db/schema.js';
 
+// In-Memory Presence Registry: Map<documentId, Map<socketId, userInfo>>
+const documentPresence = new Map();
+
+// Color palette for collaborator avatar circles (Google Docs inspired)
+const AVATAR_COLORS = [
+  { bg: 'bg-indigo-600', text: 'text-white', border: 'border-indigo-300', hex: '#4f46e5' },
+  { bg: 'bg-emerald-600', text: 'text-white', border: 'border-emerald-300', hex: '#059669' },
+  { bg: 'bg-amber-600', text: 'text-white', border: 'border-amber-300', hex: '#d97706' },
+  { bg: 'bg-rose-600', text: 'text-white', border: 'border-rose-300', hex: '#e11d48' },
+  { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-300', hex: '#9333ea' },
+  { bg: 'bg-cyan-600', text: 'text-white', border: 'border-cyan-300', hex: '#0891b2' },
+  { bg: 'bg-pink-600', text: 'text-white', border: 'border-pink-300', hex: '#db2777' },
+  { bg: 'bg-teal-600', text: 'text-white', border: 'border-teal-300', hex: '#0d9488' },
+];
+
+/**
+ * Deterministically assign an avatar color based on user ID
+ */
+const getAvatarColor = (userId) => {
+  const numId = typeof userId === 'number' ? userId : String(userId).charCodeAt(0) || 0;
+  const index = Math.abs(numId) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[index];
+};
+
+/**
+ * Get deduplicated list of active human users in a document room
+ */
+const getActiveUsersInRoom = (documentId) => {
+  const roomMap = documentPresence.get(documentId);
+  if (!roomMap) return [];
+
+  // Deduplicate by userId (so multiple tabs by the same user only show 1 avatar)
+  const userMap = new Map();
+  for (const info of roomMap.values()) {
+    if (!userMap.has(info.userId)) {
+      userMap.set(info.userId, info);
+    }
+  }
+  return Array.from(userMap.values());
+};
+
+/**
+ * Helper to remove a socket from a room's presence map and broadcast update
+ */
+const removeSocketFromPresence = (io, socket, documentId) => {
+  const roomMap = documentPresence.get(documentId);
+  if (roomMap && roomMap.has(socket.id)) {
+    roomMap.delete(socket.id);
+
+    // Clean up empty room map to prevent memory leaks
+    if (roomMap.size === 0) {
+      documentPresence.delete(documentId);
+    }
+
+    const updatedUsers = getActiveUsersInRoom(documentId);
+
+    // Broadcast updated presence to remaining users in the room
+    io.to(documentId).emit('presence-update', {
+      documentId,
+      activeUsers: updatedUsers,
+    });
+
+    console.log(
+      `[Presence] User "${socket.user?.name}" left doc "${documentId}". Active users remaining: ${updatedUsers.length}`
+    );
+  }
+};
+
 /**
  * Register document-specific WebSocket event listeners
  * @param {import('socket.io').Server} io
@@ -10,7 +78,6 @@ import { documents, documentCollaborators } from '../db/schema.js';
 export const registerDocumentHandlers = (io, socket) => {
   /**
    * Handle joining an isolated document room
-   * Validates document existence and checks user permissions (Owner or Collaborator)
    */
   socket.on('join-document', async ({ documentId }, callback = () => {}) => {
     try {
@@ -31,7 +98,7 @@ export const registerDocumentHandlers = (io, socket) => {
         return callback({ success: false, error: 'Document not found or archived' });
       }
 
-      // 2. Check authorization: Is caller the owner or an active collaborator?
+      // 2. Check authorization: Owner or Collaborator?
       let userRole = null;
 
       if (doc.ownerId === userId) {
@@ -65,10 +132,7 @@ export const registerDocumentHandlers = (io, socket) => {
       // 4. Leave any previous document room this socket was in
       if (socket.currentDocumentId && socket.currentDocumentId !== documentId) {
         socket.leave(socket.currentDocumentId);
-        socket.to(socket.currentDocumentId).emit('user-left', {
-          user: socket.user,
-          documentId: socket.currentDocumentId,
-        });
+        removeSocketFromPresence(io, socket, socket.currentDocumentId);
       }
 
       // 5. Join the new isolated room
@@ -76,22 +140,40 @@ export const registerDocumentHandlers = (io, socket) => {
       socket.currentDocumentId = documentId;
       socket.userRole = userRole;
 
+      // 6. Record user in Presence Registry
+      if (!documentPresence.has(documentId)) {
+        documentPresence.set(documentId, new Map());
+      }
+
+      const userInfo = {
+        userId: socket.user.id,
+        name: socket.user.name,
+        email: socket.user.email,
+        role: userRole,
+        color: getAvatarColor(socket.user.id),
+        joinedAt: Date.now(),
+      };
+
+      documentPresence.get(documentId).set(socket.id, userInfo);
+
+      const activeUsers = getActiveUsersInRoom(documentId);
+
       console.log(
-        `[Socket Room] User "${socket.user.name}" joined room "${documentId}" with role "${userRole}"`
+        `[Presence] User "${socket.user.name}" joined doc "${documentId}". Active users now: ${activeUsers.length}`
       );
 
-      // 6. Notify other active users in the room
-      socket.to(documentId).emit('user-joined', {
-        user: socket.user,
-        role: userRole,
-        timestamp: new Date().toISOString(),
+      // 7. Broadcast updated active users list to the ENTIRE room
+      io.to(documentId).emit('presence-update', {
+        documentId,
+        activeUsers,
       });
 
-      // 7. Acknowledge back to client with confirmation & role
+      // 8. Return confirmation and current active users list to joining socket
       callback({
         success: true,
         documentId,
         userRole,
+        activeUsers,
         user: socket.user,
       });
     } catch (error) {
@@ -102,18 +184,11 @@ export const registerDocumentHandlers = (io, socket) => {
 
   /**
    * Handle incoming Quill Delta changes from an active editor
-   * Broadcasts delta payload only to peer collaborators in the same room
    */
   socket.on('send-changes', ({ documentId, delta }) => {
     if (!documentId || !delta) return;
 
-    if (socket.currentDocumentId !== documentId) {
-      console.warn(`[Socket Delta] Rejected delta: Socket ${socket.id} not in room ${documentId}`);
-      return;
-    }
-
-    if (socket.userRole === 'viewer') {
-      console.warn(`[Socket Delta] Rejected edit attempt from viewer ${socket.user.email} in room ${documentId}`);
+    if (socket.currentDocumentId !== documentId || socket.userRole === 'viewer') {
       return;
     }
 
@@ -127,7 +202,6 @@ export const registerDocumentHandlers = (io, socket) => {
 
   /**
    * Handle WebSocket-driven debounced document auto-save
-   * Persists Delta snapshot to PostgreSQL and broadcasts synchronized status to the entire room
    */
   socket.on('save-document', async ({ documentId, data }, callback = () => {}) => {
     try {
@@ -135,24 +209,16 @@ export const registerDocumentHandlers = (io, socket) => {
         return callback({ success: false, error: 'Document ID and data are required' });
       }
 
-      // Security Check: Verify socket is inside the room
-      if (socket.currentDocumentId !== documentId) {
-        return callback({ success: false, error: 'Not in this document room' });
+      if (socket.currentDocumentId !== documentId || socket.userRole === 'viewer') {
+        return callback({ success: false, error: 'Unauthorized to save' });
       }
 
-      // Role Check: Viewers cannot trigger saves
-      if (socket.userRole === 'viewer') {
-        return callback({ success: false, error: 'Viewers cannot save changes' });
-      }
-
-      // 1. Notify all members in the room that a save operation is in progress
       io.to(documentId).emit('save-status', {
         status: 'saving',
         userId: socket.user.id,
         userName: socket.user.name,
       });
 
-      // 2. Persist Delta snapshot directly to PostgreSQL
       await db
         .update(documents)
         .set({
@@ -163,10 +229,8 @@ export const registerDocumentHandlers = (io, socket) => {
 
       const lastSavedAt = new Date().toISOString();
 
-      // 3. Acknowledge back to caller
       callback({ success: true, lastSavedAt });
 
-      // 4. Broadcast synchronized 'saved' status to ALL room members
       io.to(documentId).emit('save-status', {
         status: 'saved',
         lastSavedAt,
@@ -179,7 +243,6 @@ export const registerDocumentHandlers = (io, socket) => {
       console.error('[Socket Save] Failed to persist document data:', error);
       callback({ success: false, error: 'Database persistence failed' });
 
-      // Broadcast error status to room
       io.to(documentId).emit('save-status', {
         status: 'error',
         error: 'Failed to persist document to cloud',
@@ -211,31 +274,19 @@ export const registerDocumentHandlers = (io, socket) => {
     if (!documentId) return;
 
     socket.leave(documentId);
+    removeSocketFromPresence(io, socket, documentId);
+
     if (socket.currentDocumentId === documentId) {
       socket.currentDocumentId = null;
     }
-
-    console.log(`[Socket Room] User "${socket.user.name}" left room "${documentId}"`);
-
-    socket.to(documentId).emit('user-left', {
-      user: socket.user,
-      documentId,
-      timestamp: new Date().toISOString(),
-    });
   });
 
   /**
    * Handle socket disconnection
    */
   socket.on('disconnecting', () => {
-    for (const room of socket.rooms) {
-      if (room !== socket.id) {
-        socket.to(room).emit('user-left', {
-          user: socket.user,
-          documentId: room,
-          timestamp: new Date().toISOString(),
-        });
-      }
+    if (socket.currentDocumentId) {
+      removeSocketFromPresence(io, socket, socket.currentDocumentId);
     }
     console.log(`[Socket] Client disconnected: ${socket.user?.name || socket.id}`);
   });

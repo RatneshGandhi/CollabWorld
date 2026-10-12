@@ -12,7 +12,7 @@ import { Button } from '../components/ui/Button';
 export const EditorPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { user: currentUser, token } = useAuth();
 
   // Document metadata state
   const [document, setDocument] = useState(null);
@@ -22,6 +22,9 @@ export const EditorPage = () => {
 
   // WebSocket connection state: 'connecting' | 'connected' | 'disconnected'
   const [socketStatus, setSocketStatus] = useState('connecting');
+
+  // Real-Time Collaborators Presence State
+  const [activeUsers, setActiveUsers] = useState([]);
 
   // Editor instance & synchronized save state
   const [quillInstance, setQuillInstance] = useState(null);
@@ -69,7 +72,7 @@ export const EditorPage = () => {
     };
   }, [id]);
 
-  // 2. Connect to Socket.IO & join document room
+  // 2. Connect to Socket.IO, join room & track live collaborator presence
   useEffect(() => {
     if (!id || !token || !document) return;
 
@@ -83,7 +86,10 @@ export const EditorPage = () => {
       const res = await socketService.joinDocument(id);
       if (res?.success) {
         setSocketStatus('connected');
-        console.log('[EditorPage] Successfully joined room with role:', res.userRole);
+        if (res.activeUsers) {
+          setActiveUsers(res.activeUsers);
+        }
+        console.log('[EditorPage] Joined room. Active collaborators:', res.activeUsers?.length || 1);
       } else {
         setSocketStatus('disconnected');
         console.error('[EditorPage] Failed to join document room:', res?.error);
@@ -98,12 +104,12 @@ export const EditorPage = () => {
       setSocketStatus('disconnected');
     };
 
-    const handleUserJoined = (data) => {
-      console.log('[EditorPage] Peer collaborator joined room:', data.user.name);
-    };
-
-    const handleUserLeft = (data) => {
-      console.log('[EditorPage] Peer collaborator left room:', data.user.name);
+    // Real-Time Collaborator Presence Listener
+    const handlePresenceUpdate = (data) => {
+      if (data?.activeUsers) {
+        setActiveUsers(data.activeUsers);
+        console.log('[EditorPage] Updated active collaborators list:', data.activeUsers.length);
+      }
     };
 
     // Real-Time Delta Receiver: Apply remote changes from peers instantly
@@ -137,8 +143,7 @@ export const EditorPage = () => {
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('connect_error', handleConnectError);
-    socket.on('user-joined', handleUserJoined);
-    socket.on('user-left', handleUserLeft);
+    socket.on('presence-update', handlePresenceUpdate);
     socket.on('receive-changes', handleReceiveChanges);
     socket.on('receive-title-change', handleReceiveTitleChange);
     socket.on('save-status', handleSaveStatus);
@@ -147,12 +152,12 @@ export const EditorPage = () => {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('connect_error', handleConnectError);
-      socket.off('user-joined', handleUserJoined);
-      socket.off('user-left', handleUserLeft);
+      socket.off('presence-update', handlePresenceUpdate);
       socket.off('receive-changes', handleReceiveChanges);
       socket.off('receive-title-change', handleReceiveTitleChange);
       socket.off('save-status', handleSaveStatus);
       socketService.leaveDocument(id);
+      setActiveUsers([]);
     };
   }, [id, token, document?.id, quillInstance]);
 
@@ -183,7 +188,6 @@ export const EditorPage = () => {
     const contents = quillInstance.getContents();
 
     try {
-      // 1. Primary Engine: Persist over WebSocket pipeline
       const rawSocket = socketService.getRawSocket();
       if (rawSocket && rawSocket.connected) {
         const res = await socketService.saveDocument(id, contents);
@@ -193,7 +197,6 @@ export const EditorPage = () => {
         }
       }
 
-      // 2. Fallback Engine: If socket unavailable or rejected, persist via REST API
       console.warn('[EditorPage] WebSocket save unavailable, falling back to REST PUT endpoint');
       await docService.saveDocumentData(id, contents);
       setSaveStatus('saved');
@@ -210,13 +213,9 @@ export const EditorPage = () => {
     const handleTextChange = (delta, oldDelta, source) => {
       if (source !== 'user' || isInitialLoadRef.current) return;
 
-      // 1. Broadcast Delta to peers immediately (<15ms)
       socketService.sendChanges(id, delta);
-
-      // 2. Mark local save status as unsaved
       setSaveStatus('unsaved');
 
-      // 3. Schedule debounced auto-save (1500ms inactivity)
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
@@ -307,10 +306,12 @@ export const EditorPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
-      {/* Top Header with Inline Renaming, Synchronized Save Status, Socket Status & Share Trigger */}
+      {/* Top Header with Inline Renaming, Active Collaborator Avatars, Save Status & Share */}
       <EditorHeader
         document={document}
         userRole={userRole}
+        activeUsers={activeUsers}
+        currentUserId={currentUser?.id}
         saveStatus={saveStatus}
         socketStatus={socketStatus}
         onRenameTitle={handleRenameTitle}

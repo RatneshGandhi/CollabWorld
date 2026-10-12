@@ -11,10 +11,13 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { ActiveUsers } from './ActiveUsers';
 
 export const EditorHeader = ({
   document,
   userRole,
+  activeUsers = [],
+  currentUserId,
   saveStatus = 'saved', // 'saving' | 'saved' | 'unsaved' | 'error'
   socketStatus = 'connected', // 'connecting' | 'connected' | 'disconnected'
   onRenameTitle,
@@ -182,8 +185,14 @@ export const EditorHeader = ({
         </div>
       </div>
 
-      {/* Right: Actions */}
+      {/* Right: Active Users Avatars & Share Action */}
       <div className="flex items-center gap-3">
+        {/* Real-Time Collaborator Presence Avatars */}
+        <ActiveUsers
+          activeUsers={activeUsers}
+          currentUserId={currentUserId}
+        />
+
         {!isViewer && (
           <Button
             type="button"
