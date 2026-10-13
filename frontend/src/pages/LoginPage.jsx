@@ -5,11 +5,13 @@ import { useAuth } from '../context/AuthContext';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Alert } from '../components/ui/Alert';
+import { useToast } from '../context/ToastContext';
 
 export const LoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { login } = useAuth();
+  const { toast } = useToast();
 
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
@@ -38,7 +40,8 @@ export const LoginPage = () => {
     setErrorMessage('');
 
     try {
-      await login(formData);
+      const data = await login(formData);
+      toast.success(`Welcome back, ${data?.user?.name || 'User'}!`);
       navigate(from, { replace: true });
     } catch (err) {
       const msg =

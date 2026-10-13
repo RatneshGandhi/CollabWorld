@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Alert } from '../components/ui/Alert';
+import { useToast } from '../context/ToastContext';
 
 export const RegisterPage = () => {
   const navigate = useNavigate();
@@ -19,6 +20,7 @@ export const RegisterPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const { toast } = useToast();
 
   const handleChange = (e) => {
     setFormData((prev) => ({
@@ -50,11 +52,12 @@ export const RegisterPage = () => {
     setErrorMessage('');
 
     try {
-      await register({
+      const data = await register({
         name: formData.name,
         email: formData.email,
         password: formData.password,
       });
+      toast.success(`Welcome to CollabSpace, ${data?.user?.name || formData.name}!`);
       navigate('/dashboard', { replace: true });
     } catch (err) {
       const msg =

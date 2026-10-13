@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { docService } from '../services/docService';
 import { Navbar } from '../components/ui/Navbar';
 import { TemplateBar } from '../components/dashboard/TemplateBar';
 import { DocumentCard } from '../components/dashboard/DocumentCard';
+import { DashboardSkeleton } from '../components/dashboard/DashboardSkeleton';
 import { RenameModal } from '../components/dashboard/RenameModal';
 import { DeleteModal } from '../components/dashboard/DeleteModal';
 import { Alert } from '../components/ui/Alert';
@@ -14,7 +16,6 @@ import {
   Search,
   LayoutGrid,
   List,
-  Loader2,
   FolderOpen,
   Plus,
   RefreshCw,
@@ -23,6 +24,7 @@ import {
 export const DashboardPage = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
 
   // Documents state
   const [ownedDocs, setOwnedDocs] = useState([]);
@@ -30,7 +32,6 @@ export const DashboardPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
   const [shareTarget, setShareTarget] = useState(null);
 
   // UI state
@@ -52,9 +53,9 @@ export const DashboardPage = () => {
       setOwnedDocs(data.owned || []);
       setSharedDocs(data.shared || []);
     } catch (err) {
-      setErrorMessage(
-        err?.response?.data?.message || 'Failed to load documents. Please try again.'
-      );
+      const msg = err?.response?.data?.message || 'Failed to load documents. Please try again.';
+      setErrorMessage(msg);
+      toast.error(msg);
     } finally {
       setIsLoading(false);
     }
@@ -64,69 +65,75 @@ export const DashboardPage = () => {
     fetchDocuments();
   }, []);
 
-  // Filtered documents based on active tab and search query
+  // Filtered documents list based on active tab & search query
   const displayedDocuments = useMemo(() => {
-    let pool = [];
-    if (activeTab === 'all') pool = [...ownedDocs, ...sharedDocs];
-    else if (activeTab === 'owned') pool = ownedDocs;
-    else if (activeTab === 'shared') pool = sharedDocs;
+    let list = [];
+    if (activeTab === 'all') {
+      list = [...ownedDocs, ...sharedDocs];
+    } else if (activeTab === 'owned') {
+      list = ownedDocs;
+    } else if (activeTab === 'shared') {
+      list = sharedDocs;
+    }
 
-    if (!searchQuery.trim()) return pool;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((doc) => doc.title.toLowerCase().includes(q));
+    }
 
-    const q = searchQuery.toLowerCase();
-    return pool.filter((doc) => doc.title.toLowerCase().includes(q));
+    return list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   }, [ownedDocs, sharedDocs, activeTab, searchQuery]);
 
-  // Create document handler
-  const handleCreateDocument = async (title) => {
+  // Create new document action
+  const handleCreateDocument = async (title = 'Untitled Document') => {
     setIsCreating(true);
-    setErrorMessage('');
     try {
       const data = await docService.createDocument(title);
+      toast.success(`Created "${title}"`);
       navigate(`/document/${data.document.id}`);
     } catch (err) {
-      setErrorMessage(
-        err?.response?.data?.message || 'Failed to create new document.'
-      );
+      const msg = err?.response?.data?.message || 'Failed to create document.';
+      toast.error(msg);
+    } finally {
       setIsCreating(false);
     }
   };
 
-  // Rename document handler
-  const handleRenameDocument = async (id, newTitle) => {
+  // Rename document action
+  const handleRenameDocument = async (newTitle) => {
+    if (!renameTarget) return;
     setModalLoading(true);
     try {
-      const data = await docService.updateDocumentTitle(id, newTitle);
+      const data = await docService.updateDocumentTitle(renameTarget.id, newTitle);
+      const updated = data.document;
+
       setOwnedDocs((prev) =>
-        prev.map((d) => (d.id === id ? { ...d, title: data.document.title } : d))
+        prev.map((d) => (d.id === updated.id ? { ...d, title: updated.title } : d))
       );
       setSharedDocs((prev) =>
-        prev.map((d) => (d.id === id ? { ...d, title: data.document.title } : d))
+        prev.map((d) => (d.id === updated.id ? { ...d, title: updated.title } : d))
       );
-      setSuccessMessage('Document renamed successfully');
+
+      toast.success(`Renamed document to "${newTitle}"`);
       setRenameTarget(null);
     } catch (err) {
-      setErrorMessage(
-        err?.response?.data?.message || 'Failed to rename document'
-      );
+      toast.error(err?.response?.data?.message || 'Failed to rename document.');
     } finally {
       setModalLoading(false);
     }
   };
 
-  // Delete document handler
-  const handleDeleteDocument = async (id) => {
+  // Delete document action
+  const handleDeleteDocument = async () => {
+    if (!deleteTarget) return;
     setModalLoading(true);
     try {
-      await docService.deleteDocument(id);
-      setOwnedDocs((prev) => prev.filter((d) => d.id !== id));
-      setSharedDocs((prev) => prev.filter((d) => d.id !== id));
-      setSuccessMessage('Document deleted successfully');
+      await docService.deleteDocument(deleteTarget.id);
+      setOwnedDocs((prev) => prev.filter((d) => d.id !== deleteTarget.id));
+      toast.success(`Deleted "${deleteTarget.title}"`);
       setDeleteTarget(null);
     } catch (err) {
-      setErrorMessage(
-        err?.response?.data?.message || 'Failed to delete document'
-      );
+      toast.error(err?.response?.data?.message || 'Failed to delete document.');
     } finally {
       setModalLoading(false);
     }
@@ -134,17 +141,15 @@ export const DashboardPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Navbar />
+      <Navbar user={user} />
 
-      {/* Template Bar */}
+      {/* Starter Templates Bar */}
       <TemplateBar
         onCreateDocument={handleCreateDocument}
         isCreating={isCreating}
       />
 
-      {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Toast Alerts */}
         {errorMessage && (
           <Alert
             variant="error"
@@ -153,37 +158,28 @@ export const DashboardPage = () => {
             className="mb-6"
           />
         )}
-        {successMessage && (
-          <Alert
-            variant="success"
-            message={successMessage}
-            onClose={() => setSuccessMessage('')}
-            className="mb-6"
-          />
-        )}
 
-        {/* Toolbar & Filters */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 mb-6">
-          {/* Tabs */}
-          <div className="flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl">
+        {/* Dashboard Filter & View Controls */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
             <button
               type="button"
               onClick={() => setActiveTab('all')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 activeTab === 'all'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
               }`}
             >
-              All ({ownedDocs.length + sharedDocs.length})
+              All Documents ({ownedDocs.length + sharedDocs.length})
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('owned')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 activeTab === 'owned'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
               }`}
             >
               Owned by me ({ownedDocs.length})
@@ -191,37 +187,36 @@ export const DashboardPage = () => {
             <button
               type="button"
               onClick={() => setActiveTab('shared')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 activeTab === 'shared'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
               }`}
             >
               Shared with me ({sharedDocs.length})
             </button>
           </div>
 
-          {/* Search & View Toggle */}
           <div className="flex items-center gap-3">
             <div className="relative flex-1 sm:w-64">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 placeholder="Search documents..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full text-xs pl-9 pr-3.5 py-2 bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all placeholder:text-slate-400"
+                className="w-full text-xs pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all text-slate-800 placeholder:text-slate-400 shadow-2xs"
               />
             </div>
 
-            <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 shadow-xs">
+            <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 shadow-2xs">
               <button
                 type="button"
                 onClick={() => setViewMode('grid')}
-                className={`p-1.5 rounded-md cursor-pointer transition-colors ${
+                className={`p-1.5 rounded-md transition-colors cursor-pointer ${
                   viewMode === 'grid'
-                    ? 'bg-slate-100 text-blue-600'
-                    : 'text-slate-400 hover:text-slate-700'
+                    ? 'bg-blue-50 text-blue-600 font-medium'
+                    : 'text-slate-400 hover:text-slate-600'
                 }`}
                 title="Grid view"
               >
@@ -230,10 +225,10 @@ export const DashboardPage = () => {
               <button
                 type="button"
                 onClick={() => setViewMode('list')}
-                className={`p-1.5 rounded-md cursor-pointer transition-colors ${
+                className={`p-1.5 rounded-md transition-colors cursor-pointer ${
                   viewMode === 'list'
-                    ? 'bg-slate-100 text-blue-600'
-                    : 'text-slate-400 hover:text-slate-700'
+                    ? 'bg-blue-50 text-blue-600 font-medium'
+                    : 'text-slate-400 hover:text-slate-600'
                 }`}
                 title="List view"
               >
@@ -254,10 +249,7 @@ export const DashboardPage = () => {
 
         {/* Document Grid / List Content */}
         {isLoading ? (
-          <div className="py-20 flex flex-col items-center justify-center text-slate-400 gap-3">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-            <p className="text-sm font-medium">Loading your documents...</p>
-          </div>
+          <DashboardSkeleton viewMode={viewMode} />
         ) : displayedDocuments.length === 0 ? (
           <div className="py-16 bg-white border border-slate-200/80 rounded-2xl text-center px-4">
             <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-3">

@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { docService } from '../services/docService';
 import { socketService } from '../services/socketService';
 import { EditorHeader } from '../components/editor/EditorHeader';
 import { TextEditor } from '../components/editor/TextEditor';
 import { ShareModal } from '../components/editor/ShareModal';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { EditorSkeleton } from '../components/editor/EditorSkeleton';
+import { AlertCircle } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
 export const EditorPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user: currentUser, token } = useAuth();
+  const { toast } = useToast();
 
   // Document metadata state
   const [document, setDocument] = useState(null);
@@ -53,9 +56,9 @@ export const EditorPage = () => {
         }
       } catch (err) {
         if (isMounted) {
-          setErrorMessage(
-            err?.response?.data?.message || 'Failed to load document.'
-          );
+          const msg = err?.response?.data?.message || 'Failed to load document.';
+          setErrorMessage(msg);
+          toast.error(msg);
         }
       } finally {
         if (isMounted) {
@@ -82,17 +85,14 @@ export const EditorPage = () => {
     if (!socket) return;
 
     const handleConnect = async () => {
-      console.log('[EditorPage] Socket connected, joining document room:', id);
       const res = await socketService.joinDocument(id);
       if (res?.success) {
         setSocketStatus('connected');
         if (res.activeUsers) {
           setActiveUsers(res.activeUsers);
         }
-        console.log('[EditorPage] Joined room. Active collaborators:', res.activeUsers?.length || 1);
       } else {
         setSocketStatus('disconnected');
-        console.error('[EditorPage] Failed to join document room:', res?.error);
       }
     };
 
@@ -104,28 +104,24 @@ export const EditorPage = () => {
       setSocketStatus('disconnected');
     };
 
-    // Real-Time Collaborator Presence Listener
     const handlePresenceUpdate = (data) => {
       if (data?.activeUsers) {
         setActiveUsers(data.activeUsers);
-        console.log('[EditorPage] Updated active collaborators list:', data.activeUsers.length);
       }
     };
 
-    // Real-Time Delta Receiver: Apply remote changes from peers instantly
     const handleReceiveChanges = (data) => {
       if (!quillInstance || !data?.delta) return;
       quillInstance.updateContents(data.delta);
     };
 
-    // Real-Time Title Sync: Update title when a peer renames it
     const handleReceiveTitleChange = (data) => {
       if (!data?.title) return;
       setDocument((prev) => ({ ...prev, title: data.title }));
       window.document.title = `${data.title} — CollabSpace Docs`;
+      toast.info(`Title updated to "${data.title}" by collaborator`);
     };
 
-    // Synchronized Save Status: Reflect room-wide persistence updates
     const handleSaveStatus = (data) => {
       if (data?.status === 'saving') {
         setSaveStatus('saving');
@@ -133,6 +129,7 @@ export const EditorPage = () => {
         setSaveStatus('saved');
       } else if (data?.status === 'error') {
         setSaveStatus('error');
+        toast.error('Collaborative save encountered an error');
       }
     };
 
@@ -180,7 +177,7 @@ export const EditorPage = () => {
     }, 100);
   }, [quillInstance, document?.id, userRole]);
 
-  // 4. Dual-Engine Save Function: WebSocket persistence with automatic REST fallback
+  // 4. Dual-Engine Save Function
   const performSave = useCallback(async () => {
     if (!quillInstance || userRole === 'viewer') return;
 
@@ -197,16 +194,16 @@ export const EditorPage = () => {
         }
       }
 
-      console.warn('[EditorPage] WebSocket save unavailable, falling back to REST PUT endpoint');
       await docService.saveDocumentData(id, contents);
       setSaveStatus('saved');
     } catch (err) {
       console.error('[EditorPage] Failed to auto-save document:', err);
       setSaveStatus('error');
+      toast.error('Save failed. Check your internet connection.');
     }
   }, [id, quillInstance, userRole]);
 
-  // 5. Attach Quill 'text-change' listener for Real-Time Broadcasting & Debounced Auto-Save
+  // 5. Attach Quill 'text-change' listener
   useEffect(() => {
     if (!quillInstance || userRole === 'viewer') return;
 
@@ -235,7 +232,7 @@ export const EditorPage = () => {
     };
   }, [quillInstance, userRole, id, performSave]);
 
-  // 6. Browser tab exit protection (warn if unsaved)
+  // 6. Browser tab exit protection
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (saveStatus === 'unsaved' || saveStatus === 'saving') {
@@ -248,16 +245,16 @@ export const EditorPage = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [saveStatus]);
 
-  // 7. Inline Title Renaming Handler (Updates DB & Broadcasts to Peers)
+  // 7. Inline Title Renaming Handler
   const handleRenameTitle = async (newTitle) => {
     try {
       const updated = await docService.updateDocumentTitle(id, newTitle);
       setDocument((prev) => ({ ...prev, title: updated.document.title }));
       window.document.title = `${updated.document.title} — CollabSpace Docs`;
-
       socketService.sendTitleChange(id, updated.document.title);
+      toast.success(`Title updated to "${updated.document.title}"`);
     } catch (err) {
-      console.error('Failed to rename document title:', err);
+      toast.error(err?.response?.data?.message || 'Failed to rename title');
     }
   };
 
@@ -266,17 +263,12 @@ export const EditorPage = () => {
     setQuillInstance(q);
   }, []);
 
-  // Loading Screen
+  // Professional Skeleton Loading State
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-3">
-        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-        <p className="text-sm font-medium text-slate-500">Opening document canvas...</p>
-      </div>
-    );
+    return <EditorSkeleton />;
   }
 
-  // Error Screen (404 / 403)
+  // Error Screen
   if (errorMessage) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
@@ -306,7 +298,6 @@ export const EditorPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
-      {/* Top Header with Inline Renaming, Active Collaborator Avatars, Save Status & Share */}
       <EditorHeader
         document={document}
         userRole={userRole}
@@ -319,13 +310,11 @@ export const EditorPage = () => {
         onOpenShare={() => setIsShareModalOpen(true)}
       />
 
-      {/* Editor Canvas */}
       <TextEditor
         onEditorReady={handleEditorReady}
         userRole={userRole}
       />
 
-      {/* In-Editor Share Modal */}
       <ShareModal
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}

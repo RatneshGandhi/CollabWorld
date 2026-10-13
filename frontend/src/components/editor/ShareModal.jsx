@@ -4,6 +4,7 @@ import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { docService } from '../../services/docService';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import {
   Mail,
   UserPlus,
@@ -14,8 +15,6 @@ import {
   Check,
   Loader2,
   Users,
-  Eye,
-  Edit3,
 } from 'lucide-react';
 
 export const ShareModal = ({
@@ -25,6 +24,7 @@ export const ShareModal = ({
   userRole,
 }) => {
   const { user: currentUser } = useAuth();
+  const { toast } = useToast();
 
   // Collaborators & Owner State
   const [owner, setOwner] = useState(null);
@@ -86,7 +86,6 @@ export const ShareModal = ({
         role,
       });
 
-      // Update state: if collaborator already exists in list, update their role, else append
       setCollaborators((prev) => {
         const exists = prev.some((c) => c.userId === data.collaborator.userId);
         if (exists) {
@@ -97,12 +96,14 @@ export const ShareModal = ({
         return [...prev, data.collaborator];
       });
 
-      setSuccessMessage(`Invited ${data.collaborator.name || email} as ${data.collaborator.role}`);
+      const msg = `Invited ${data.collaborator.name || email} as ${data.collaborator.role}`;
+      setSuccessMessage(msg);
+      toast.success(msg);
       setEmail('');
     } catch (err) {
-      setErrorMessage(
-        err?.response?.data?.message || 'Failed to invite collaborator'
-      );
+      const msg = err?.response?.data?.message || 'Failed to invite collaborator';
+      setErrorMessage(msg);
+      toast.error(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -118,11 +119,13 @@ export const ShareModal = ({
       setCollaborators((prev) =>
         prev.map((c) => (c.userId === collab.userId ? { ...c, role: newRole } : c))
       );
-      setSuccessMessage(`Updated ${collab.name}'s role to ${newRole}`);
+      const msg = `Updated ${collab.name}'s role to ${newRole}`;
+      setSuccessMessage(msg);
+      toast.success(msg);
     } catch (err) {
-      setErrorMessage(
-        err?.response?.data?.message || 'Failed to update collaborator role'
-      );
+      const msg = err?.response?.data?.message || 'Failed to update collaborator role';
+      setErrorMessage(msg);
+      toast.error(msg);
     }
   };
 
@@ -131,11 +134,13 @@ export const ShareModal = ({
     try {
       await docService.removeCollaborator(document.id, collabUserId);
       setCollaborators((prev) => prev.filter((c) => c.userId !== collabUserId));
-      setSuccessMessage(`Removed ${collabName} from document`);
+      const msg = `Removed ${collabName} from document`;
+      setSuccessMessage(msg);
+      toast.success(msg);
     } catch (err) {
-      setErrorMessage(
-        err?.response?.data?.message || 'Failed to remove collaborator'
-      );
+      const msg = err?.response?.data?.message || 'Failed to remove collaborator';
+      setErrorMessage(msg);
+      toast.error(msg);
     }
   };
 
@@ -144,6 +149,7 @@ export const ShareModal = ({
     const docUrl = window.location.href;
     navigator.clipboard.writeText(docUrl);
     setHasCopied(true);
+    toast.success('Document link copied to clipboard!');
     setTimeout(() => setHasCopied(false), 2500);
   };
 
@@ -174,11 +180,10 @@ export const ShareModal = ({
           />
         )}
 
-        {/* 1. Invite Form (Only Document Owner can invite new people) */}
+        {/* 1. Invite Form */}
         {isOwner ? (
           <form onSubmit={handleInvite} className="space-y-2">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-              {/* Email Input */}
               <div className="relative flex-1">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -191,7 +196,6 @@ export const ShareModal = ({
                 />
               </div>
 
-              {/* Role Dropdown */}
               <div className="sm:w-28 flex-shrink-0">
                 <select
                   value={role}
@@ -203,7 +207,6 @@ export const ShareModal = ({
                 </select>
               </div>
 
-              {/* Submit Button */}
               <Button
                 type="submit"
                 variant="primary"
@@ -243,7 +246,6 @@ export const ShareModal = ({
             </div>
           ) : (
             <div className="space-y-3 max-h-56 overflow-y-auto pr-1">
-              {/* Document Owner Row */}
               {owner && (
                 <div className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
@@ -264,7 +266,6 @@ export const ShareModal = ({
                 </div>
               )}
 
-              {/* Collaborators Rows */}
               {collaborators.map((collab) => {
                 const isSelf = collab.userId === currentUser?.id;
                 return (
@@ -284,7 +285,6 @@ export const ShareModal = ({
                       </div>
                     </div>
 
-                    {/* Role selector & remove button */}
                     <div className="flex items-center gap-2">
                       {isOwner ? (
                         <>
