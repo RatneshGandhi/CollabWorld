@@ -2,292 +2,201 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { documents, documentCollaborators } from '../db/schema.js';
 
-// In-Memory Presence Registry: Map<documentId, Map<socketId, userInfo>>
+// In-Memory Room Presence Registry: Map<documentId, Map<socketId, { userId, name, email, role, color }>>
 const documentPresence = new Map();
 
-// Color palette for collaborator avatar circles (Google Docs inspired)
+// Deterministic signature color palette for collaborator avatars
 const AVATAR_COLORS = [
-  { bg: 'bg-indigo-600', text: 'text-white', border: 'border-indigo-300', hex: '#4f46e5' },
-  { bg: 'bg-emerald-600', text: 'text-white', border: 'border-emerald-300', hex: '#059669' },
-  { bg: 'bg-amber-600', text: 'text-white', border: 'border-amber-300', hex: '#d97706' },
-  { bg: 'bg-rose-600', text: 'text-white', border: 'border-rose-300', hex: '#e11d48' },
-  { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-300', hex: '#9333ea' },
-  { bg: 'bg-cyan-600', text: 'text-white', border: 'border-cyan-300', hex: '#0891b2' },
-  { bg: 'bg-pink-600', text: 'text-white', border: 'border-pink-300', hex: '#db2777' },
-  { bg: 'bg-teal-600', text: 'text-white', border: 'border-teal-300', hex: '#0d9488' },
+  '#2563EB', // Blue
+  '#7C3AED', // Violet
+  '#059669', // Emerald
+  '#D97706', // Amber
+  '#DC2626', // Red
+  '#DB2777', // Pink
+  '#0891B2', // Cyan
+  '#4F46E5', // Indigo
 ];
 
-/**
- * Deterministically assign an avatar color based on user ID
- */
-const getAvatarColor = (userId) => {
-  const numId = typeof userId === 'number' ? userId : String(userId).charCodeAt(0) || 0;
-  const index = Math.abs(numId) % AVATAR_COLORS.length;
+function assignUserColor(userId) {
+  let hash = 0;
+  const strId = String(userId);
+  for (let i = 0; i < strId.length; i++) {
+    hash = strId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % AVATAR_COLORS.length;
   return AVATAR_COLORS[index];
-};
+}
 
-/**
- * Get deduplicated list of active human users in a document room
- */
-const getActiveUsersInRoom = (documentId) => {
-  const roomMap = documentPresence.get(documentId);
-  if (!roomMap) return [];
+function getUniqueActiveUsers(documentId) {
+  const roomSockets = documentPresence.get(documentId);
+  if (!roomSockets) return [];
 
-  // Deduplicate by userId (so multiple tabs by the same user only show 1 avatar)
-  const userMap = new Map();
-  for (const info of roomMap.values()) {
-    if (!userMap.has(info.userId)) {
-      userMap.set(info.userId, info);
+  const uniqueUsers = new Map();
+  for (const info of roomSockets.values()) {
+    if (!uniqueUsers.has(info.userId)) {
+      uniqueUsers.set(info.userId, info);
     }
   }
-  return Array.from(userMap.values());
-};
+  return Array.from(uniqueUsers.values());
+}
 
 /**
- * Helper to remove a socket from a room's presence map and broadcast update
+ * Verify whether a user is either the owner or an active collaborator of a document
  */
-const removeSocketFromPresence = (io, socket, documentId) => {
-  const roomMap = documentPresence.get(documentId);
-  if (roomMap && roomMap.has(socket.id)) {
-    roomMap.delete(socket.id);
+async function verifyUserDocumentAccess(userId, documentId) {
+  // Check if owner
+  const [ownedDoc] = await db
+    .select({ id: documents.id })
+    .from(documents)
+    .where(and(eq(documents.id, documentId), eq(documents.ownerId, userId), eq(documents.isArchived, false)))
+    .limit(1);
 
-    // Clean up empty room map to prevent memory leaks
-    if (roomMap.size === 0) {
-      documentPresence.delete(documentId);
+  if (ownedDoc) return { hasAccess: true, role: 'owner' };
+
+  // Check if collaborator
+  const [collab] = await db
+    .select({ id: documentCollaborators.id, role: documentCollaborators.role })
+    .from(documentCollaborators)
+    .where(and(eq(documentCollaborators.documentId, documentId), eq(documentCollaborators.userId, userId)))
+    .limit(1);
+
+  if (collab) return { hasAccess: true, role: collab.role };
+
+  return { hasAccess: false, role: null };
+}
+
+export function registerDocumentHandlers(io, socket) {
+  const user = socket.user;
+  const userColor = assignUserColor(user.id);
+
+  // 1. Join Document Room (with Permission Verification & Presence Registration)
+  socket.on('join-document', async (payload, callback = () => {}) => {
+    const documentId = typeof payload === 'string' ? payload : payload?.documentId;
+
+    if (!documentId) {
+      return callback({ success: false, error: 'Document ID is required' });
     }
 
-    const updatedUsers = getActiveUsersInRoom(documentId);
-
-    // Broadcast updated presence to remaining users in the room
-    io.to(documentId).emit('presence-update', {
-      documentId,
-      activeUsers: updatedUsers,
-    });
-
-    console.log(
-      `[Presence] User "${socket.user?.name}" left doc "${documentId}". Active users remaining: ${updatedUsers.length}`
-    );
-  }
-};
-
-/**
- * Register document-specific WebSocket event listeners
- * @param {import('socket.io').Server} io
- * @param {import('socket.io').Socket} socket
- */
-export const registerDocumentHandlers = (io, socket) => {
-  /**
-   * Handle joining an isolated document room
-   */
-  socket.on('join-document', async ({ documentId }, callback = () => {}) => {
     try {
-      if (!documentId) {
-        return callback({ success: false, error: 'Document ID is required' });
+      // Security Check: Verify user has permission to view this document
+      const { hasAccess, role } = await verifyUserDocumentAccess(user.id, documentId);
+      if (!hasAccess) {
+        console.warn(`[Socket Security] Unauthorized join attempt by User ${user.id} on Doc ${documentId}`);
+        return callback({ success: false, error: 'Forbidden: You do not have permission to access this document' });
       }
 
-      const userId = socket.user.id;
-
-      // 1. Fetch document from PostgreSQL
-      const [doc] = await db
-        .select()
-        .from(documents)
-        .where(and(eq(documents.id, documentId), eq(documents.isArchived, false)))
-        .limit(1);
-
-      if (!doc) {
-        return callback({ success: false, error: 'Document not found or archived' });
-      }
-
-      // 2. Check authorization: Owner or Collaborator?
-      let userRole = null;
-
-      if (doc.ownerId === userId) {
-        userRole = 'owner';
-      } else {
-        const [collab] = await db
-          .select({ role: documentCollaborators.role })
-          .from(documentCollaborators)
-          .where(
-            and(
-              eq(documentCollaborators.documentId, documentId),
-              eq(documentCollaborators.userId, userId)
-            )
-          )
-          .limit(1);
-
-        if (collab) {
-          userRole = collab.role; // 'editor' | 'viewer'
-        }
-      }
-
-      // 3. Reject if unauthorized
-      if (!userRole) {
-        console.warn(`[Socket Room] Unauthorized join attempt by ${socket.user.email} on doc ${documentId}`);
-        return callback({
-          success: false,
-          error: 'You do not have permission to access this document room',
-        });
-      }
-
-      // 4. Leave any previous document room this socket was in
-      if (socket.currentDocumentId && socket.currentDocumentId !== documentId) {
-        socket.leave(socket.currentDocumentId);
-        removeSocketFromPresence(io, socket, socket.currentDocumentId);
-      }
-
-      // 5. Join the new isolated room
-      socket.join(documentId);
+      // Track socket state
       socket.currentDocumentId = documentId;
-      socket.userRole = userRole;
+      socket.userRole = role;
 
-      // 6. Record user in Presence Registry
+      // Join isolated Socket.IO room
+      socket.join(documentId);
+
+      // Register in memory presence
       if (!documentPresence.has(documentId)) {
         documentPresence.set(documentId, new Map());
       }
-
-      const userInfo = {
-        userId: socket.user.id,
-        name: socket.user.name,
-        email: socket.user.email,
-        role: userRole,
-        color: getAvatarColor(socket.user.id),
-        joinedAt: Date.now(),
-      };
-
-      documentPresence.get(documentId).set(socket.id, userInfo);
-
-      const activeUsers = getActiveUsersInRoom(documentId);
-
-      console.log(
-        `[Presence] User "${socket.user.name}" joined doc "${documentId}". Active users now: ${activeUsers.length}`
-      );
-
-      // 7. Broadcast updated active users list to the ENTIRE room
-      io.to(documentId).emit('presence-update', {
-        documentId,
-        activeUsers,
+      const roomMap = documentPresence.get(documentId);
+      roomMap.set(socket.id, {
+        userId: user.id,
+        name: user.name || 'Anonymous Collaborator',
+        email: user.email,
+        role,
+        color: userColor,
       });
 
-      // 8. Return confirmation and current active users list to joining socket
-      callback({
-        success: true,
-        documentId,
-        userRole,
-        activeUsers,
-        user: socket.user,
-      });
-    } catch (error) {
-      console.error('[Socket Room] Error joining document:', error);
-      callback({ success: false, error: 'Failed to join document room' });
+      const activeUsers = getUniqueActiveUsers(documentId);
+
+      // Broadcast updated presence to everyone in the room
+      io.to(documentId).emit('presence-update', { documentId, activeUsers });
+
+      callback({ success: true, documentId, userRole: role, activeUsers, userColor });
+    } catch (err) {
+      console.error('[Socket] join-document error:', err);
+      callback({ success: false, error: 'Internal server error joining document' });
     }
   });
 
-  /**
-   * Handle incoming Quill Delta changes from an active editor
-   */
+  // 2. Broadcast Document Changes (Real-Time Delta Stream)
   socket.on('send-changes', ({ documentId, delta }) => {
     if (!documentId || !delta) return;
-
-    if (socket.currentDocumentId !== documentId || socket.userRole === 'viewer') {
-      return;
-    }
-
-    socket.to(documentId).emit('receive-changes', {
-      delta,
-      senderId: socket.user.id,
-      senderName: socket.user.name,
-      timestamp: Date.now(),
-    });
+    if (socket.userRole === 'viewer') return; // Read-only guard
+    socket.to(documentId).emit('receive-changes', { delta, senderId: user.id });
   });
 
-  /**
-   * Handle WebSocket-driven debounced document auto-save
-   */
-  socket.on('save-document', async ({ documentId, data }, callback = () => {}) => {
+  // 3. Broadcast Title Change
+  socket.on('send-title-change', ({ documentId, title }) => {
+    if (!documentId || !title) return;
+    if (socket.userRole === 'viewer') return;
+    socket.to(documentId).emit('receive-title-change', { title, senderId: user.id });
+  });
+
+  // 4. Save Document Data via WebSocket
+  socket.on('save-document', async ({ documentId, data, content }, callback = () => {}) => {
+    const docData = data || content;
+    if (!documentId || !docData) {
+      return callback({ success: false, error: 'Invalid payload' });
+    }
+
+    if (socket.userRole === 'viewer') {
+      return callback({ success: false, error: 'Unauthorized: Read-only viewer' });
+    }
+
     try {
-      if (!documentId || !data) {
-        return callback({ success: false, error: 'Document ID and data are required' });
-      }
-
-      if (socket.currentDocumentId !== documentId || socket.userRole === 'viewer') {
-        return callback({ success: false, error: 'Unauthorized to save' });
-      }
-
-      io.to(documentId).emit('save-status', {
-        status: 'saving',
-        userId: socket.user.id,
-        userName: socket.user.name,
-      });
+      io.to(documentId).emit('save-status', { status: 'saving' });
 
       await db
         .update(documents)
         .set({
-          data,
+          data: docData,
           updatedAt: new Date(),
         })
         .where(eq(documents.id, documentId));
 
-      const lastSavedAt = new Date().toISOString();
+      io.to(documentId).emit('save-status', { status: 'saved' });
 
-      callback({ success: true, lastSavedAt });
-
-      io.to(documentId).emit('save-status', {
-        status: 'saved',
-        lastSavedAt,
-        userId: socket.user.id,
-        userName: socket.user.name,
-      });
-
-      console.log(`[Socket Save] Persisted doc "${documentId}" to PostgreSQL by ${socket.user.name}`);
+      callback({ success: true });
     } catch (error) {
-      console.error('[Socket Save] Failed to persist document data:', error);
+      console.error('[Socket] Failed to persist document via WebSocket:', error);
+      io.to(documentId).emit('save-status', { status: 'error' });
       callback({ success: false, error: 'Database persistence failed' });
-
-      io.to(documentId).emit('save-status', {
-        status: 'error',
-        error: 'Failed to persist document to cloud',
-      });
     }
   });
 
-  /**
-   * Handle live document title renaming broadcast
-   */
-  socket.on('send-title-change', ({ documentId, title }) => {
-    if (!documentId || !title) return;
+  // 5. Clean up presence on disconnect / leave
+  const handleLeaveAllRooms = () => {
+    for (const [docId, roomMap] of documentPresence.entries()) {
+      if (roomMap.has(socket.id)) {
+        roomMap.delete(socket.id);
 
-    if (socket.currentDocumentId !== documentId || socket.userRole === 'viewer') {
-      return;
+        if (roomMap.size === 0) {
+          documentPresence.delete(docId);
+        } else {
+          const activeUsers = getUniqueActiveUsers(docId);
+          io.to(docId).emit('presence-update', { documentId: docId, activeUsers });
+        }
+      }
     }
+  };
 
-    socket.to(documentId).emit('receive-title-change', {
-      title,
-      senderId: socket.user.id,
-      senderName: socket.user.name,
-    });
-  });
-
-  /**
-   * Handle leaving a document room explicitly
-   */
-  socket.on('leave-document', ({ documentId }) => {
+  socket.on('leave-document', (payload) => {
+    const documentId = typeof payload === 'string' ? payload : payload?.documentId;
     if (!documentId) return;
-
     socket.leave(documentId);
-    removeSocketFromPresence(io, socket, documentId);
 
-    if (socket.currentDocumentId === documentId) {
-      socket.currentDocumentId = null;
+    const roomMap = documentPresence.get(documentId);
+    if (roomMap && roomMap.has(socket.id)) {
+      roomMap.delete(socket.id);
+      if (roomMap.size === 0) {
+        documentPresence.delete(documentId);
+      } else {
+        const activeUsers = getUniqueActiveUsers(documentId);
+        io.to(documentId).emit('presence-update', { documentId, activeUsers });
+      }
     }
   });
 
-  /**
-   * Handle socket disconnection
-   */
   socket.on('disconnecting', () => {
-    if (socket.currentDocumentId) {
-      removeSocketFromPresence(io, socket, socket.currentDocumentId);
-    }
-    console.log(`[Socket] Client disconnected: ${socket.user?.name || socket.id}`);
+    handleLeaveAllRooms();
   });
-};
+}
