@@ -7,17 +7,19 @@ let io = null;
 /**
  * Initialize and attach Socket.IO to the Node HTTP server
  * @param {import('http').Server} httpServer
+ * @param {Object} corsOptions - Dynamic CORS settings
  * @returns {import('socket.io').Server}
  */
-export const initSocketServer = (httpServer) => {
+export const initSocketServer = (httpServer, corsOptions = {}) => {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL || 'http://localhost:5173',
+      origin: corsOptions.origin || ((origin, cb) => cb(null, true)),
       methods: ['GET', 'POST'],
       credentials: true,
     },
     pingTimeout: 60000,
     pingInterval: 25000,
+    transports: ['websocket', 'polling'],
   });
 
   // Apply JWT authentication to all incoming socket connections
@@ -25,7 +27,7 @@ export const initSocketServer = (httpServer) => {
 
   // Connection listener
   io.on('connection', (socket) => {
-    console.log(`[Socket] New connection established: ${socket.id} (User: ${socket.user.name})`);
+    console.log(`[Socket] Connection established: ${socket.id} (User: ${socket.user?.name})`);
 
     // Register document event handlers
     registerDocumentHandlers(io, socket);
@@ -38,7 +40,7 @@ export const initSocketServer = (httpServer) => {
     });
   });
 
-  console.log('[Socket] Socket.IO server initialized successfully');
+  console.log('[Socket] Socket.IO server initialized with dynamic CORS');
   return io;
 };
 
