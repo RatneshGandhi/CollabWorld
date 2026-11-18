@@ -51,15 +51,13 @@ Built with a focus on **production engineering**, CollabSpace pairs a responsive
 
 ## 📸 Visual Showcase
 
-> *Screenshots and real-time collaboration GIFs live in [`docs/assets/`](./docs/assets/).*
-
-| Live Real-Time Collaboration | Document Dashboard |
+| Document Dashboard & Templates | Rich Text Editor Canvas (Live Sync) |
 | :---: | :---: |
-| ![Real-Time Collaboration Demo](./docs/assets/live-collab.gif) | ![Document Dashboard](./docs/assets/dashboard.png) |
+| ![Document Dashboard](./docs/assets/dashboard.jpg) | ![Editor Canvas](./docs/assets/editor.png) |
 
-| Rich Text Editor Canvas | Collaborator Share & RBAC Modal |
+| Live Collaborator Presence | Collaborator Share & RBAC Modal |
 | :---: | :---: |
-| ![Editor Canvas](./docs/assets/editor.png) | ![Share Modal](./docs/assets/share-modal.png) |
+| ![Live Collaborator Presence](./docs/assets/live-presence.png) | ![Share Modal](./docs/assets/share-modal.png) |
 
 ---
 
